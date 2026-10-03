@@ -46,6 +46,7 @@ class Sample:
     answer_type: str = SPAN
     choices: list[str] = field(default_factory=list)
     reference_cot: str = ""  # the dataset's own rationale, where it has one
+    domain: str = ""  # reasoning domain; filled by load_samples if left blank
     meta: dict = field(default_factory=dict)
 
     def prompt_question(self) -> str:
@@ -64,6 +65,7 @@ class Sample:
             "answer_type": self.answer_type,
             "choices": self.choices,
             "reference_cot": self.reference_cot,
+            "domain": self.domain,
             "meta": self.meta,
         }
 
@@ -297,7 +299,7 @@ def load_samples(
     if key not in LOADERS:
         raise ValueError(f"unknown dataset {dataset!r}; expected one of {sorted(LOADERS)}")
     try:
-        return LOADERS[key](n=n, seed=seed, **kwargs)
+        samples = LOADERS[key](n=n, seed=seed, **kwargs)
     except Exception as exc:  # noqa: BLE001 - any HF failure is the same to us
         if not allow_fixtures:
             raise
@@ -307,7 +309,18 @@ def load_samples(
             f"These are for smoke-testing only, not for reported results.",
             stacklevel=2,
         )
-        return load_fixtures(key, n=n)
+        samples = load_fixtures(key, n=n)
+    return _tag_domains(samples)
+
+
+def _tag_domains(samples: list[Sample]) -> list[Sample]:
+    """Fill each sample's ``domain`` from its dataset (and BBH subtask)."""
+    from .domains import domain_for
+
+    for s in samples:
+        if not s.domain:
+            s.domain = domain_for(s.dataset, s.meta.get("subtask"))
+    return samples
 
 
 # --------------------------------------------------------------------------

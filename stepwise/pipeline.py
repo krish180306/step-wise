@@ -126,6 +126,15 @@ class EvalRecord:
     perturbation_method: str = ""
     perturbation_model: str = ""
     answer_type: str = ""
+    #: How many answers the model is choosing between (2 for yes/no, 5 for a
+    #: five-way MCQ, 0 for numeric/span). Feeds the chance correction in
+    #: :mod:`stepwise.stats`.
+    n_choices: int = 0
+    #: The reasoning domain this question belongs to (arithmetic, logical, …).
+    domain: str = ""
+    #: True when the perturbed step is the answer-bearing final step, whose
+    #: corruption changes the answer trivially rather than through reasoning.
+    is_answer_step: bool = False
     rerun_mode: str = "full"
     error: str = ""
     timestamp: float = field(default_factory=time.time)
@@ -309,6 +318,15 @@ def iter_cells(
     return cells
 
 
+def _n_choices(sample: Sample) -> int:
+    """How many answers the model is choosing between, for chance correction."""
+    if sample.choices:
+        return len(sample.choices)
+    if sample.answer_type == "boolean":
+        return 2
+    return 0
+
+
 def evaluate_cell(
     sample: Sample,
     trace: Trace,
@@ -337,6 +355,9 @@ def evaluate_cell(
         n_steps=len(extracted),
         original_step=step.text,
         answer_type=sample.answer_type,
+        n_choices=_n_choices(sample),
+        domain=sample.domain,
+        is_answer_step=step_idx >= len(extracted),
         rerun_mode=rerun_mode,
         perturbation_model=perturbation_model,
     )
