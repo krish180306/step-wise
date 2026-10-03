@@ -1,0 +1,766 @@
+<title>Stepwise Call Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Archivo:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+/* Tokens follow the Stepwise dashboard's own design system: warm paper and
+   ink, one blue accent, amber reserved for anything that leaves the machine. */
+:root {
+  --paper: oklch(0.955 0.008 85);
+  --surface: oklch(0.985 0.004 85);
+  --band: oklch(0.938 0.009 85);
+  --ink: oklch(0.22 0.012 60);
+  --ink-2: oklch(0.40 0.010 60);
+  --ink-3: oklch(0.54 0.010 60);
+  --rule: oklch(0.85 0.008 75);
+  --rule-2: oklch(0.76 0.010 75);
+  --accent: oklch(0.47 0.16 258);
+  --accent-soft: oklch(0.925 0.035 258);
+  --on-accent: oklch(0.985 0.004 85);
+  --net: oklch(0.56 0.14 52);
+  --net-soft: oklch(0.945 0.035 70);
+  --edge: oklch(0.55 0.012 60 / 0.42);
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --sans: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --serif: "Instrument Serif", Georgia, "Times New Roman", serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: oklch(0.17 0.010 60);
+    --surface: oklch(0.215 0.012 60);
+    --band: oklch(0.192 0.011 60);
+    --ink: oklch(0.94 0.006 85);
+    --ink-2: oklch(0.80 0.008 75);
+    --ink-3: oklch(0.64 0.010 60);
+    --rule: oklch(0.33 0.012 60);
+    --rule-2: oklch(0.44 0.012 60);
+    --accent: oklch(0.74 0.13 258);
+    --accent-soft: oklch(0.31 0.06 258);
+    --on-accent: oklch(0.17 0.02 258);
+    --net: oklch(0.79 0.13 66);
+    --net-soft: oklch(0.29 0.05 60);
+    --edge: oklch(0.70 0.010 60 / 0.34);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: oklch(0.17 0.010 60);
+  --surface: oklch(0.215 0.012 60);
+  --band: oklch(0.192 0.011 60);
+  --ink: oklch(0.94 0.006 85);
+  --ink-2: oklch(0.80 0.008 75);
+  --ink-3: oklch(0.64 0.010 60);
+  --rule: oklch(0.33 0.012 60);
+  --rule-2: oklch(0.44 0.012 60);
+  --accent: oklch(0.74 0.13 258);
+  --accent-soft: oklch(0.31 0.06 258);
+  --on-accent: oklch(0.17 0.02 258);
+  --net: oklch(0.79 0.13 66);
+  --net-soft: oklch(0.29 0.05 60);
+  --edge: oklch(0.70 0.010 60 / 0.34);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 15px/1.6 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1240px; margin: 0 auto; padding-inline: clamp(16px, 3.5vw, 40px); }
+h1, h2, h3 { text-wrap: balance; margin: 0; font-weight: 500; }
+p { margin: 0; }
+code, pre, .mono { font-family: var(--mono); }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---- header ------------------------------------------------------------- */
+header { padding-block: 40px 22px; display: grid; gap: 14px; }
+.kicker {
+  font: 500 11px/1.4 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3);
+}
+header h1 { font: 400 clamp(38px, 5vw, 56px)/1 var(--serif); letter-spacing: -0.015em; }
+.lede { max-width: 68ch; color: var(--ink-2); font-size: 16px; }
+.facts {
+  display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 4px;
+  font: 12px/1.5 var(--mono); color: var(--ink-3); font-variant-numeric: tabular-nums;
+}
+.facts b { color: var(--ink); font-weight: 700; }
+
+/* ---- path picker -------------------------------------------------------- */
+.picker { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; padding-block: 6px 14px; }
+.segments { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--rule-2); background: var(--surface); }
+.segments button {
+  border: 0; background: transparent; padding: 8px 14px;
+  font: 500 12.5px/1.3 var(--sans); color: var(--ink-2);
+  border-right: 1px solid var(--rule);
+}
+.segments button:last-child { border-right: 0; }
+.segments button:hover { color: var(--ink); background: var(--band); }
+.segments button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+.picker .hint { font-size: 13px; color: var(--ink-3); }
+
+/* ---- map ---------------------------------------------------------------- */
+figure { margin: 0; border: 1px solid var(--rule); background: var(--surface); }
+.map-scroll { overflow-x: auto; }
+#map { display: block; width: 100%; min-width: 980px; height: auto; }
+figcaption {
+  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px 24px;
+  padding: 12px 16px; border-top: 1px solid var(--rule);
+  font-size: 13px; color: var(--ink-3);
+}
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font: 11.5px/1.4 var(--mono); }
+.legend span { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.legend svg { width: 26px; height: 10px; overflow: visible; }
+
+.band-bg { fill: var(--band); }
+.band-bg.alt { fill: transparent; }
+.band-label { font: 500 9.5px var(--mono); letter-spacing: 0.12em; text-transform: uppercase; fill: var(--ink-3); }
+.edge-base { fill: none; stroke: var(--edge); stroke-width: 1.2; }
+.edge-base.net { stroke: var(--net); stroke-dasharray: 5 4; opacity: 0.6; }
+.edge-hit { fill: none; stroke: transparent; stroke-width: 12; cursor: help; }
+.edge-halo { fill: none; stroke: var(--surface); stroke-width: 6; }
+.edge-hot { fill: none; stroke: var(--accent); stroke-width: 2.2; }
+.edge-hot.net { stroke: var(--net); stroke-dasharray: 6 4; }
+.edge-hot.focus { stroke-width: 3.4; }
+.ah-base { fill: var(--edge); }
+.ah-hot { fill: var(--accent); }
+.ah-net { fill: var(--net); }
+
+.node { cursor: pointer; }
+.node .box { fill: var(--surface); stroke: var(--rule-2); stroke-width: 1; }
+.node.store .box { fill: var(--band); }
+.node.store .tab { fill: var(--rule-2); }
+.node.external .box { fill: var(--net-soft); stroke: var(--net); stroke-dasharray: 4 3; }
+.node .n-name { font: 700 12px var(--mono); fill: var(--ink); }
+.node .n-role { font: 400 10.5px var(--sans); fill: var(--ink-3); }
+.node .n-file { font: 400 9.5px var(--mono); fill: var(--ink-3); }
+.node:hover .box, .node:focus-visible .box { stroke: var(--accent); stroke-width: 1.6; }
+.node:focus { outline: none; }
+.node.is-selected .box { stroke: var(--accent); stroke-width: 2.2; }
+.node.is-active .box { stroke: var(--ink-2); }
+/* Dim by colour, never opacity: a see-through box would let the lines behind
+   it show through and read as connections into that file. */
+.node.is-dim .box { stroke: var(--rule); }
+.node.is-dim .n-name, .node.is-dim .n-role, .node.is-dim .n-file { fill: var(--rule-2); }
+.node.is-dim.external .box { stroke: var(--rule-2); }
+.node.is-dim.store .tab { fill: var(--rule); }
+.node.is-dim:hover .n-name { fill: var(--ink); }
+.node.is-dim:hover .n-role { fill: var(--ink-3); }
+
+.chip-bg { fill: var(--surface); stroke: var(--accent); stroke-width: 1; }
+.chip-bg.net { stroke: var(--net); }
+.chip-bg.focus { fill: var(--accent-soft); stroke-width: 1.6; }
+.chip-num { fill: var(--accent); }
+.chip-num-text { font: 700 10px var(--mono); fill: var(--on-accent); }
+.chip-text { font: 500 10.5px var(--mono); fill: var(--ink); }
+
+/* ---- panels ------------------------------------------------------------- */
+.below { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr); gap: 20px; padding-block: 22px 8px; }
+@media (max-width: 900px) { .below { grid-template-columns: minmax(0, 1fr); } }
+.panel { border: 1px solid var(--rule); background: var(--surface); display: grid; align-content: start; }
+.panel-head { padding: 18px 20px 14px; border-bottom: 1px solid var(--rule); display: grid; gap: 6px; }
+.panel-head h2 { font: 400 28px/1.1 var(--serif); }
+.panel-head h2.mono { font: 700 20px/1.2 var(--mono); }
+.panel-head .cmd {
+  justify-self: start; font-size: 12px; padding: 3px 8px; background: var(--band); color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.panel-head p { color: var(--ink-2); font-size: 14px; max-width: 62ch; }
+.panel-body { padding: 6px 0 12px; max-height: 760px; overflow-y: auto; }
+.text-button {
+  justify-self: start; border: 1px solid var(--rule-2); background: transparent; padding: 5px 10px;
+  font: 500 12px/1.3 var(--sans); color: var(--ink-2);
+}
+.text-button:hover { border-color: var(--accent); color: var(--ink); }
+
+.steps { list-style: none; margin: 0; padding: 0; }
+.steps li {
+  display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px;
+  padding: 11px 20px; border-bottom: 1px solid var(--rule); cursor: pointer;
+}
+.steps li:last-child { border-bottom: 0; }
+.steps li:hover, .steps li:focus-visible, .steps li.is-focus { background: var(--accent-soft); outline: none; }
+.steps .num { font: 700 12px/1.9 var(--mono); color: var(--accent); font-variant-numeric: tabular-nums; }
+.step-label { font-weight: 500; font-size: 14.5px; }
+.loc { display: flex; flex-wrap: wrap; gap: 2px 10px; font: 12px/1.6 var(--mono); color: var(--ink-3); margin-top: 2px; }
+.fileline { color: var(--ink); font-weight: 500; }
+.code {
+  margin: 5px 0 0; padding: 5px 9px; background: var(--band); border-left: 2px solid var(--rule-2);
+  font: 12px/1.5 var(--mono); color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.handler { font: 12px/1.6 var(--mono); color: var(--ink-3); margin-top: 4px; }
+
+.detail-section { padding: 12px 20px 6px; display: grid; gap: 8px; }
+.detail-section h3 {
+  font: 500 11px/1.4 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3);
+  display: flex; gap: 8px; align-items: baseline;
+}
+.detail-section h3 b { color: var(--ink); font-weight: 700; }
+.group { display: grid; gap: 3px; }
+.group-title { font: 700 12.5px/1.5 var(--mono); color: var(--ink); }
+.group-title.net { color: var(--net); }
+.sites { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.sites li { display: grid; grid-template-columns: minmax(52px, auto) minmax(0, 1fr); gap: 2px 12px; font-size: 13px; }
+.sites .ln { font: 500 12px/1.65 var(--mono); color: var(--accent); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sites .what { color: var(--ink-2); }
+.sites .what .fn { font: 12px var(--mono); color: var(--ink); }
+.sites .code { grid-column: 2; margin-top: 1px; }
+.empty-note { color: var(--ink-3); font-size: 13.5px; }
+
+/* ---- ledger ------------------------------------------------------------- */
+.ledger { padding-block: 34px 60px; display: grid; gap: 14px; }
+.ledger-head { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 24px; }
+.ledger-head h2 { font: 400 34px/1.1 var(--serif); }
+.ledger-head p { color: var(--ink-2); max-width: 64ch; }
+.filter { display: grid; gap: 4px; }
+.filter label { font: 500 11px/1.4 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
+.filter-row { display: flex; gap: 8px; align-items: center; }
+.filter input {
+  width: min(320px, 70vw); padding: 7px 10px; border: 1px solid var(--rule-2); background: var(--surface);
+  color: var(--ink); font: 13px var(--mono);
+}
+.filter input:focus { border-color: var(--accent); outline: none; }
+.count { font: 12px var(--mono); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.file-group { border: 1px solid var(--rule); background: var(--surface); }
+.file-group > h3 {
+  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px;
+  padding: 10px 16px; border-bottom: 1px solid var(--rule); font: 700 13px/1.4 var(--mono);
+}
+.file-group > h3 span { font-weight: 400; color: var(--ink-3); font-size: 12px; }
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; min-width: 760px; }
+th {
+  text-align: left; font: 500 10.5px/1.4 var(--mono); letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-3); padding: 7px 12px; border-bottom: 1px solid var(--rule);
+}
+td { padding: 7px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; font-size: 13px; }
+tr:last-child td { border-bottom: 0; }
+td.ln { font: 500 12.5px/1.5 var(--mono); color: var(--accent); font-variant-numeric: tabular-nums; width: 56px; }
+td.fn { font: 12px/1.5 var(--mono); white-space: nowrap; }
+td.code-cell { font: 12px/1.5 var(--mono); color: var(--ink-2); overflow-wrap: anywhere; min-width: 260px; }
+td.to { font: 500 12px/1.5 var(--mono); white-space: nowrap; }
+td.to.same { color: var(--ink-3); font-weight: 400; }
+td.to.net { color: var(--net); }
+td.why { color: var(--ink-2); min-width: 180px; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .segments button, .steps li, .node, .text-button { transition: background-color 120ms, color 120ms, opacity 120ms; }
+}
+</style>
+
+<header class="wrap">
+  <p class="kicker">Stepwise · architecture</p>
+  <h1>Stepwise Call Map</h1>
+  <p class="lede">Every part of the faithfulness pipeline, and the exact line where each one calls the next. Pick a path to follow it step by step, click any file to list everything it calls and everything that calls it, or hover a line on the map to read its call sites.</p>
+  <p class="facts" id="facts"></p>
+</header>
+
+<main class="wrap">
+  <div class="picker">
+    <div class="segments" role="group" aria-label="Path to show on the map" id="segments"></div>
+    <p class="hint" id="hint"></p>
+  </div>
+
+  <figure>
+    <div class="map-scroll">
+      <svg id="map" viewBox="0 0 1140 760" role="img" aria-label="Architecture map of Stepwise: twenty parts in six layers, from the CLI and browser down to the Groq API, connected by the calls between them, each labelled with its file and line."></svg>
+    </div>
+    <figcaption>
+      <span>Each arrow points from the file that makes a call to the file it calls into.</span>
+      <span class="legend">
+        <span><svg viewBox="0 0 26 10" aria-hidden="true"><line x1="0" y1="5" x2="26" y2="5" stroke="var(--accent)" stroke-width="2.2"/></svg>on the selected path</span>
+        <span><svg viewBox="0 0 26 10" aria-hidden="true"><line x1="0" y1="5" x2="26" y2="5" stroke="var(--ink-3)" stroke-width="1.2"/></svg>other call</span>
+        <span><svg viewBox="0 0 26 10" aria-hidden="true"><line x1="0" y1="5" x2="26" y2="5" stroke="var(--net)" stroke-width="2" stroke-dasharray="5 4"/></svg>leaves the machine</span>
+        <span><svg viewBox="0 0 26 10" aria-hidden="true"><rect x="1" y="2" width="24" height="8" fill="var(--band)" stroke="var(--rule-2)"/><rect x="1" y="0" width="9" height="2" fill="var(--rule-2)"/></svg>files on disk</span>
+      </span>
+    </figcaption>
+  </figure>
+
+  <section class="below">
+    <div class="panel" id="steps-panel" aria-live="polite"></div>
+    <div class="panel" id="detail-panel" aria-live="polite"></div>
+  </section>
+
+  <section class="ledger" id="ledger">
+    <div class="ledger-head">
+      <div>
+        <h2>Every call site</h2>
+        <p>Grouped by the file that makes the call. Line numbers and code are read from the source files, not typed by hand.</p>
+      </div>
+      <div class="filter">
+        <label for="ledger-filter">Filter</label>
+        <div class="filter-row">
+          <input id="ledger-filter" type="search" placeholder="file, function, line or code" autocomplete="off">
+          <span class="count" id="ledger-count"></span>
+        </div>
+      </div>
+    </div>
+    <div id="ledger-groups" class="ledger" style="padding:0"></div>
+  </section>
+</main>
+
+<script>
+const D = {"nodes": {"ui": {"label": "index.html", "path": "stepwise/dashboard/static/index.html", "role": "Browser dashboard", "about": "Single-page dashboard. Fetches JSON from the API, renders charts, streams the Ask chat.", "row": 0, "cx": 330, "kind": "code"}, "main": {"label": "main.py", "path": "main.py", "role": "CLI entry point", "about": "Command-line entry: run, demo, analyse, ask, score, dashboard, models.", "row": 0, "cx": 780, "kind": "code"}, "app": {"label": "app.py", "path": "stepwise/dashboard/app.py", "role": "FastAPI + SSE", "about": "FastAPI backend: read-only JSON endpoints over results/, plus the streaming chat endpoint.", "row": 1, "cx": 330, "kind": "code"}, "chat": {"label": "chat.py", "path": "stepwise/agent/chat.py", "role": "Streaming chat agent", "about": "Multi-turn tool-calling agent. Yields one event per step so the browser can show the loop.", "row": 2, "cx": 330, "kind": "code"}, "analyst": {"label": "analyst.py", "path": "stepwise/agent/analyst.py", "role": "Report agent", "about": "One-shot tool-calling agent that investigates a run and writes a markdown report.", "row": 2, "cx": 530, "kind": "code"}, "pipeline": {"label": "pipeline.py", "path": "stepwise/pipeline.py", "role": "The evaluation loop", "about": "Elicit the model's CoT, segment it, corrupt one step, re-run, classify, save.", "row": 2, "cx": 780, "kind": "code"}, "demo": {"label": "demo.py", "path": "stepwise/demo.py", "role": "Simulated offline run", "about": "Runs the real pipeline against simulated models. No network, output marked simulated.", "row": 2, "cx": 990, "kind": "code"}, "tools": {"label": "tools.py", "path": "stepwise/agent/tools.py", "role": "10 agent tools", "about": "The ten deterministic query tools both agents call: scores, records, examples, tests.", "row": 3, "cx": 310, "kind": "code"}, "score": {"label": "score.py", "path": "stepwise/score.py", "role": "Faithfulness maths", "about": "Turns labelled cells into pandas tables: faithfulness, dependency, coverage.", "row": 3, "cx": 480, "kind": "code"}, "extractor": {"label": "extractor.py", "path": "stepwise/extractor.py", "role": "CoT → steps", "about": "Splits a chain of thought into steps and splices one back, byte-for-byte.", "row": 3, "cx": 650, "kind": "code"}, "perturbations": {"label": "perturbations.py", "path": "stepwise/perturbations.py", "role": "4 step corruptions", "about": "Writes the corrupted step via the LLM, validates it, falls back to rules.", "row": 3, "cx": 820, "kind": "code"}, "answers": {"label": "answers.py", "path": "stepwise/answers.py", "role": "Parse & match answers", "about": "Pulls the final answer out of model text and decides whether two answers match.", "row": 3, "cx": 990, "kind": "code"}, "config": {"label": "config.py", "path": "stepwise/config.py", "role": "Models, keys, settings", "about": "Model registry, RunConfig, and which environment variable holds each API key.", "row": 4, "cx": 330, "kind": "code"}, "llm": {"label": "llm.py", "path": "stepwise/llm.py", "role": "Cache → provider → HTTP", "about": "LLMClient: checks the disk cache, picks a provider, makes the HTTP call, stores the reply.", "row": 4, "cx": 600, "kind": "code"}, "cache": {"label": ".cache/", "path": ".cache/", "role": "Every API response", "about": "Sharded JSON files, one per API response, keyed by a hash of the request identity.", "row": 4, "cx": 820, "kind": "store"}, "datasets": {"label": "datasets.py", "path": "stepwise/datasets.py", "role": "5 dataset loaders", "about": "Loads GSM8K, StrategyQA, HotpotQA, CommonsenseQA, BBH onto one Sample schema.", "row": 4, "cx": 1010, "kind": "code"}, "results": {"label": "results/", "path": "results/", "role": "Run outputs", "about": "<dataset>.jsonl records, <dataset>.traces.json sidecars, analysis_*.md reports.", "row": null, "cx": null, "kind": "store"}, "env": {"label": ".env", "path": ".env", "role": "GROQ_API_KEY", "about": "Local, gitignored file holding the API key. Loaded into os.environ at startup.", "row": 5, "cx": 330, "kind": "store"}, "groq": {"label": "Groq API", "path": "api.groq.com", "role": "Chat completions", "about": "The only place model calls leave the machine. OpenAI-compatible chat completions.", "row": 5, "cx": 600, "kind": "external"}, "hf": {"label": "HuggingFace Hub", "path": "huggingface.co", "role": "Dataset downloads", "about": "Dataset files fetched by the datasets library, cached locally after the first run.", "row": 5, "cx": 1010, "kind": "external"}}, "edges": [{"id": 0, "src": "main", "dst": "llm", "file": "main.py", "cls": null, "func": "main", "def": 245, "note": "load_dotenv() copies .env into os.environ", "sites": [{"line": 252, "code": "load_dotenv()"}]}, {"id": 1, "src": "main", "dst": "main", "file": "main.py", "cls": null, "func": "main", "def": 245, "note": "dispatches to the chosen cmd_* handler", "sites": [{"line": 265, "code": "return handlers[args.command](args)"}]}, {"id": 2, "src": "main", "dst": "config", "file": "main.py", "cls": null, "func": "_require_key", "def": 81, "note": "fails early if the provider key is missing", "sites": [{"line": 84, "code": "missing = [p for p in providers if not api_key(p)]"}]}, {"id": 3, "src": "main", "dst": "config", "file": "main.py", "cls": null, "func": "cmd_run", "def": 96, "note": "builds the run configuration", "sites": [{"line": 99, "code": "config = RunConfig("}]}, {"id": 4, "src": "main", "dst": "pipeline", "file": "main.py", "cls": null, "func": "cmd_run", "def": 96, "note": "starts the evaluation", "sites": [{"line": 122, "code": "result = run_evaluation(config)"}]}, {"id": 5, "src": "main", "dst": "pipeline", "file": "main.py", "cls": null, "func": "cmd_run", "def": 96, "note": "RunResult.save() writes the run to disk", "sites": [{"line": 123, "code": "path = result.save()"}]}, {"id": 6, "src": "main", "dst": "score", "file": "main.py", "cls": null, "func": "cmd_run", "def": 96, "note": "prints the faithfulness table", "sites": [{"line": 126, "code": "table = score.faithfulness_scores(result.records)"}]}, {"id": 7, "src": "main", "dst": "demo", "file": "main.py", "cls": null, "func": "cmd_demo", "def": 133, "note": "runs the simulated offline pipeline", "sites": [{"line": 145, "code": "result = run_demo(dataset=args.demo_dataset, n_samples=args.n_samples)"}]}, {"id": 8, "src": "main", "dst": "analyst", "file": "main.py", "cls": null, "func": "cmd_analyse", "def": 153, "note": "hands a saved run to the report agent", "sites": [{"line": 164, "code": "report = analyse_results(path, model=model, brief=args.brief)"}]}, {"id": 9, "src": "main", "dst": "tools", "file": "main.py", "cls": null, "func": "cmd_ask", "def": 170, "note": "loads a saved run for the agent", "sites": [{"line": 185, "code": "ctx = AnalysisContext.from_files(path)"}]}, {"id": 10, "src": "main", "dst": "chat", "file": "main.py", "cls": null, "func": "cmd_ask", "def": 170, "note": "asks the chat agent one question", "sites": [{"line": 190, "code": "result = ask(ctx, question, model=model, run=args.dataset)"}]}, {"id": 11, "src": "main", "dst": "score", "file": "main.py", "cls": null, "func": "cmd_score", "def": 199, "note": "loads records for the score tables", "sites": [{"line": 206, "code": "frame = score.records_dataframe(path)"}]}, {"id": 12, "src": "main", "dst": "app", "file": "main.py", "cls": null, "func": "cmd_dashboard", "def": 222, "note": "starts uvicorn with the FastAPI app", "sites": [{"line": 226, "code": "serve(host=args.host, port=args.port, reload=args.reload)"}]}, {"id": 13, "src": "pipeline", "dst": "llm", "file": "stepwise/pipeline.py", "cls": null, "func": "run_evaluation", "def": 476, "note": "one LLM client for the whole run", "sites": [{"line": 484, "code": "client = client or LLMClient(use_cache=config.use_cache)"}]}, {"id": 14, "src": "pipeline", "dst": "datasets", "file": "stepwise/pipeline.py", "cls": null, "func": "run_evaluation", "def": 476, "note": "loads N questions", "sites": [{"line": 486, "code": "samples = load_samples("}]}, {"id": 15, "src": "pipeline", "dst": "config", "file": "stepwise/pipeline.py", "cls": null, "func": "run_evaluation", "def": 476, "note": "model handle → ModelSpec", "sites": [{"line": 490, "code": "specs = [resolve_model(name) for name in config.models]"}]}, {"id": 16, "src": "pipeline", "dst": "pipeline", "file": "stepwise/pipeline.py", "cls": null, "func": "run_evaluation", "def": 476, "note": "one worker thread per question", "sites": [{"line": 507, "code": "pool.submit(run_sample, sample, spec, client, config): sample"}]}, {"id": 17, "src": "pipeline", "dst": "pipeline", "file": "stepwise/pipeline.py", "cls": null, "func": "run_sample", "def": 439, "note": "gets the baseline chain of thought", "sites": [{"line": 448, "code": "trace = elicit_trace(sample, spec, client)"}]}, {"id": 18, "src": "pipeline", "dst": "extractor", "file": "stepwise/pipeline.py", "cls": null, "func": "run_sample", "def": 439, "note": "segments the CoT into steps", "sites": [{"line": 449, "code": "extracted = extract_steps(trace.cot)"}]}, {"id": 19, "src": "pipeline", "dst": "pipeline", "file": "stepwise/pipeline.py", "cls": null, "func": "run_sample", "def": 439, "note": "lists the (step, class) cells", "sites": [{"line": 455, "code": "cells = iter_cells(extracted, config.perturbation_types, config.max_steps_per_sample)"}]}, {"id": 20, "src": "pipeline", "dst": "pipeline", "file": "stepwise/pipeline.py", "cls": null, "func": "run_sample", "def": 439, "note": "runs one cell end to end", "sites": [{"line": 459, "code": "record = evaluate_cell("}]}, {"id": 21, "src": "pipeline", "dst": "llm", "file": "stepwise/pipeline.py", "cls": null, "func": "elicit_trace", "def": 210, "note": "API call 1: model writes its own CoT", "sites": [{"line": 229, "code": "response = client.complete("}]}, {"id": 22, "src": "pipeline", "dst": "pipeline", "file": "stepwise/pipeline.py", "cls": null, "func": "elicit_trace", "def": 210, "note": "separates reasoning from the Answer line", "sites": [{"line": 238, "code": "cot, answer = split_cot_and_answer(response.text, sample)"}]}, {"id": 23, "src": "pipeline", "dst": "extractor", "file": "stepwise/pipeline.py", "cls": null, "func": "elicit_trace", "def": 210, "note": "segments the baseline CoT", "sites": [{"line": 240, "code": "extracted = extract_steps(cot)"}]}, {"id": 24, "src": "pipeline", "dst": "answers", "file": "stepwise/pipeline.py", "cls": null, "func": "elicit_trace", "def": 210, "note": "is the baseline answer correct?", "sites": [{"line": 251, "code": "correct=answers_match(answer, sample.gold_answer, sample.answer_type),"}]}, {"id": 25, "src": "pipeline", "dst": "answers", "file": "stepwise/pipeline.py", "cls": null, "func": "split_cot_and_answer", "def": 256, "note": "parses the baseline answer", "sites": [{"line": 263, "code": "answer = extract_answer(response, sample.answer_type, sample.choices, sample.question)"}]}, {"id": 26, "src": "pipeline", "dst": "perturbations", "file": "stepwise/pipeline.py", "cls": null, "func": "iter_cells", "def": 298, "note": "skips cells a class cannot act on", "sites": [{"line": 307, "code": "if is_applicable(ptype, step.text):"}]}, {"id": 27, "src": "pipeline", "dst": "perturbations", "file": "stepwise/pipeline.py", "cls": null, "func": "evaluate_cell", "def": 312, "note": "writes the corrupted step", "sites": [{"line": 345, "code": "perturbation = perturb_step("}]}, {"id": 28, "src": "pipeline", "dst": "llm", "file": "stepwise/pipeline.py", "cls": null, "func": "evaluate_cell", "def": 312, "note": "cache keys include hashes of the text", "sites": [{"line": 359, "code": "cache_key=make_cache_key("}, {"line": 382, "code": "cache_key=make_cache_key("}]}, {"id": 29, "src": "pipeline", "dst": "pipeline", "file": "stepwise/pipeline.py", "cls": null, "func": "evaluate_cell", "def": 312, "note": "splices the corrupted step in", "sites": [{"line": 375, "code": "perturbed_cot = _build_perturbed_cot(extracted, step_idx, perturbation.text, rerun_mode)"}]}, {"id": 30, "src": "pipeline", "dst": "pipeline", "file": "stepwise/pipeline.py", "cls": null, "func": "evaluate_cell", "def": 312, "note": "re-runs the model on the edited CoT", "sites": [{"line": 376, "code": "record.perturbed_answer = rerun_with_cot("}]}, {"id": 31, "src": "pipeline", "dst": "answers", "file": "stepwise/pipeline.py", "cls": null, "func": "evaluate_cell", "def": 312, "note": "is the new answer correct?", "sites": [{"line": 401, "code": "record.perturbed_correct = answers_match("}]}, {"id": 32, "src": "pipeline", "dst": "pipeline", "file": "stepwise/pipeline.py", "cls": null, "func": "evaluate_cell", "def": 312, "note": "labels the cell", "sites": [{"line": 404, "code": "record.label = classify("}]}, {"id": 33, "src": "pipeline", "dst": "extractor", "file": "stepwise/pipeline.py", "cls": null, "func": "_build_perturbed_cot", "def": 421, "note": "rebuilds the trace, other steps untouched", "sites": [{"line": 425, "code": "full = extracted.render({step_idx: new_text})"}]}, {"id": 34, "src": "pipeline", "dst": "llm", "file": "stepwise/pipeline.py", "cls": null, "func": "rerun_with_cot", "def": 270, "note": "API call 3: model re-run on edited CoT", "sites": [{"line": 281, "code": "response = client.complete("}]}, {"id": 35, "src": "pipeline", "dst": "answers", "file": "stepwise/pipeline.py", "cls": null, "func": "rerun_with_cot", "def": 270, "note": "parses the new answer", "sites": [{"line": 290, "code": "return extract_answer(response.text, sample.answer_type, sample.choices, sample.question)"}]}, {"id": 36, "src": "pipeline", "dst": "answers", "file": "stepwise/pipeline.py", "cls": null, "func": "classify", "def": 175, "note": "follows / ignores / corrects", "sites": [{"line": 198, "code": "if answers_match(perturbed_answer, original_answer, answer_type):"}, {"line": 200, "code": "if gold_answer and answers_match(perturbed_answer, gold_answer, answer_type):"}]}, {"id": 37, "src": "pipeline", "dst": "results", "file": "stepwise/pipeline.py", "cls": "RunResult", "func": "save", "def": 565, "note": "writes <dataset>.jsonl", "sites": [{"line": 569, "code": "with path.open(\"w\", encoding=\"utf-8\") as handle:"}]}, {"id": 38, "src": "pipeline", "dst": "results", "file": "stepwise/pipeline.py", "cls": "RunResult", "func": "save", "def": 565, "note": "writes <dataset>.traces.json", "sites": [{"line": 577, "code": "traces_path.write_text("}]}, {"id": 39, "src": "pipeline", "dst": "results", "file": "stepwise/pipeline.py", "cls": null, "func": "load_records", "def": 600, "note": "reads <dataset>.jsonl", "sites": [{"line": 606, "code": "for line in path.read_text(encoding=\"utf-8\").splitlines():"}]}, {"id": 40, "src": "pipeline", "dst": "results", "file": "stepwise/pipeline.py", "cls": null, "func": "load_traces", "def": 617, "note": "reads <dataset>.traces.json", "sites": [{"line": 623, "code": "return json.loads(traces_path.read_text(encoding=\"utf-8\"))"}]}, {"id": 41, "src": "perturbations", "dst": "llm", "file": "stepwise/perturbations.py", "cls": null, "func": "perturb_step", "def": 428, "note": "cache key per attempt", "sites": [{"line": 465, "code": "make_cache_key(kind=\"perturb\", key=cache_key, attempt=attempt)"}]}, {"id": 42, "src": "perturbations", "dst": "llm", "file": "stepwise/perturbations.py", "cls": null, "func": "perturb_step", "def": 428, "note": "API call 2: model writes the perturbation", "sites": [{"line": 459, "code": "response = client.complete("}]}, {"id": 43, "src": "perturbations", "dst": "perturbations", "file": "stepwise/perturbations.py", "cls": null, "func": "perturb_step", "def": 428, "note": "strips preambles and code fences", "sites": [{"line": 472, "code": "candidate = clean_output(response.text, step_text)"}]}, {"id": 44, "src": "perturbations", "dst": "perturbations", "file": "stepwise/perturbations.py", "cls": null, "func": "perturb_step", "def": 428, "note": "class-specific validation", "sites": [{"line": 474, "code": "if is_valid(candidate, step_text, ptype):"}]}, {"id": 45, "src": "perturbations", "dst": "perturbations", "file": "stepwise/perturbations.py", "cls": null, "func": "perturb_step", "def": 428, "note": "rule-based fallback", "sites": [{"line": 448, "code": "return apply_fallback(step_text, ptype)"}, {"line": 497, "code": "return apply_fallback(step_text, ptype)"}]}, {"id": 46, "src": "extractor", "dst": "extractor", "file": "stepwise/extractor.py", "cls": null, "func": "extract_steps", "def": 138, "note": "Step N: / 1. markers", "sites": [{"line": 147, "code": "marked = _extract_marked(cot)"}]}, {"id": 47, "src": "extractor", "dst": "extractor", "file": "stepwise/extractor.py", "cls": null, "func": "extract_steps", "def": 138, "note": "sentence splitting for prose", "sites": [{"line": 151, "code": "return _merge_short_steps(_extract_prose(cot), min_step_chars)"}]}, {"id": 48, "src": "extractor", "dst": "extractor", "file": "stepwise/extractor.py", "cls": null, "func": "splice_step", "def": 154, "note": "single-step replacement", "sites": [{"line": 162, "code": "return extracted.render({step_index: new_text})"}]}, {"id": 49, "src": "answers", "dst": "answers", "file": "stepwise/answers.py", "cls": null, "func": "extract_answer", "def": 37, "note": "numeric answers", "sites": [{"line": 59, "code": "return _extract_numeric(tail, question) or _extract_numeric(body, question)"}]}, {"id": 50, "src": "llm", "dst": "config", "file": "stepwise/llm.py", "cls": "LLMClient", "func": "complete", "def": 441, "note": "model handle → ModelSpec", "sites": [{"line": 461, "code": "spec = model if isinstance(model, ModelSpec) else resolve_model(model)"}]}, {"id": 51, "src": "llm", "dst": "cache", "file": "stepwise/llm.py", "cls": "LLMClient", "func": "complete", "def": 441, "note": "looks in the cache first", "sites": [{"line": 475, "code": "hit = self.cache.get(key)"}]}, {"id": 52, "src": "llm", "dst": "llm", "file": "stepwise/llm.py", "cls": "LLMClient", "func": "complete", "def": 441, "note": "picks the provider by name", "sites": [{"line": 479, "code": "provider = self.provider_for(spec)"}]}, {"id": 53, "src": "llm", "dst": "llm", "file": "stepwise/llm.py", "cls": "LLMClient", "func": "complete", "def": 441, "note": "delegates to the provider", "sites": [{"line": 480, "code": "response = provider.complete("}]}, {"id": 54, "src": "llm", "dst": "cache", "file": "stepwise/llm.py", "cls": "LLMClient", "func": "complete", "def": 441, "note": "stores the response", "sites": [{"line": 491, "code": "self.cache.put(key, response.to_dict())"}]}, {"id": 55, "src": "llm", "dst": "llm", "file": "stepwise/llm.py", "cls": "LLMClient", "func": "provider_for", "def": 428, "note": "provider name → class", "sites": [{"line": 432, "code": "factory = PROVIDERS.get(spec.provider)"}]}, {"id": 56, "src": "llm", "dst": "cache", "file": "stepwise/llm.py", "cls": "DiskCache", "func": "get", "def": 99, "note": "reads one cached response file", "sites": [{"line": 107, "code": "payload = json.loads(path.read_text(encoding=\"utf-8\"))"}]}, {"id": 57, "src": "llm", "dst": "cache", "file": "stepwise/llm.py", "cls": "DiskCache", "func": "put", "def": 115, "note": "writes a temp file, then renames it", "sites": [{"line": 124, "code": "tmp.write_text(json.dumps(record, ensure_ascii=False), encoding=\"utf-8\")"}]}, {"id": 58, "src": "llm", "dst": "config", "file": "stepwise/llm.py", "cls": "_OpenAICompatibleProvider", "func": "client", "def": 168, "note": "reads GROQ_API_KEY", "sites": [{"line": 170, "code": "if not api_key(self.name):"}]}, {"id": 59, "src": "llm", "dst": "groq", "file": "stepwise/llm.py", "cls": "_OpenAICompatibleProvider", "func": "complete", "def": 178, "note": "the HTTP request to Groq", "sites": [{"line": 204, "code": "completion = _with_retries(lambda: self.client.chat.completions.create(**kwargs))"}]}, {"id": 60, "src": "llm", "dst": "llm", "file": "stepwise/llm.py", "cls": "_OpenAICompatibleProvider", "func": "complete", "def": 178, "note": "removes <think> blocks", "sites": [{"line": 233, "code": "text=strip_thinking(message.content or \"\"),"}]}, {"id": 61, "src": "llm", "dst": "groq", "file": "stepwise/llm.py", "cls": "GroqProvider", "func": "_make_client", "def": 246, "note": "builds the Groq SDK client", "sites": [{"line": 249, "code": "return Groq(api_key=api_key(\"groq\"))"}]}, {"id": 62, "src": "llm", "dst": "env", "file": "stepwise/llm.py", "cls": null, "func": "load_dotenv", "def": 507, "note": "reads the .env file", "sites": [{"line": 516, "code": "for line in env_path.read_text(encoding=\"utf-8\").splitlines():"}]}, {"id": 63, "src": "config", "dst": "env", "file": "stepwise/config.py", "cls": null, "func": "api_key", "def": 184, "note": "looks the key up in os.environ", "sites": [{"line": 186, "code": "\"groq\": os.environ.get(\"GROQ_API_KEY\"),"}]}, {"id": 64, "src": "config", "dst": "config", "file": "stepwise/config.py", "cls": null, "func": "resolve_model", "def": 116, "note": "registry lookup", "sites": [{"line": 124, "code": "return MODEL_REGISTRY[key]"}]}, {"id": 65, "src": "datasets", "dst": "datasets", "file": "stepwise/datasets.py", "cls": null, "func": "load_samples", "def": 282, "note": "per-dataset loader", "sites": [{"line": 300, "code": "return LOADERS[key](n=n, seed=seed, **kwargs)"}]}, {"id": 66, "src": "datasets", "dst": "datasets", "file": "stepwise/datasets.py", "cls": null, "func": "load_samples", "def": 282, "note": "offline fallback fixtures", "sites": [{"line": 310, "code": "return load_fixtures(key, n=n)"}]}, {"id": 67, "src": "datasets", "dst": "datasets", "file": "stepwise/datasets.py", "cls": null, "func": "load_gsm8k", "def": 116, "note": "tries each HuggingFace mirror", "sites": [{"line": 118, "code": "rows = _sample_rows(_try_load([(\"openai/gsm8k\", \"main\"), (\"gsm8k\", \"main\")], \"test\"), n, seed)"}]}, {"id": 68, "src": "datasets", "dst": "hf", "file": "stepwise/datasets.py", "cls": null, "func": "_try_load", "def": 76, "note": "downloads from HuggingFace", "sites": [{"line": 92, "code": "return load_dataset(repo, config, split=split_name)"}, {"line": 93, "code": "return load_dataset(repo, split=split_name)"}]}, {"id": 69, "src": "demo", "dst": "datasets", "file": "stepwise/demo.py", "cls": null, "func": "run_demo", "def": 174, "note": "bundled fixture questions", "sites": [{"line": 183, "code": "samples = [s for name in FIXTURES for s in load_fixtures(name, n=n_samples)]"}, {"line": 185, "code": "samples = load_fixtures(dataset, n=n_samples)"}]}, {"id": 70, "src": "demo", "dst": "llm", "file": "stepwise/demo.py", "cls": null, "func": "run_demo", "def": 174, "note": "client wired to SimulatedProvider", "sites": [{"line": 190, "code": "client = LLMClient("}]}, {"id": 71, "src": "demo", "dst": "pipeline", "file": "stepwise/demo.py", "cls": null, "func": "run_demo", "def": 174, "note": "the real pipeline, simulated models", "sites": [{"line": 209, "code": "result = run_evaluation(config, client=client, samples=samples, progress=progress)"}]}, {"id": 72, "src": "demo", "dst": "perturbations", "file": "stepwise/demo.py", "cls": "SimulatedProvider", "func": "_perturb", "def": 96, "note": "rule-based perturbations", "sites": [{"line": 103, "code": "return apply_fallback(step, ptype).text"}]}, {"id": 73, "src": "score", "dst": "results", "file": "stepwise/score.py", "cls": null, "func": "records_dataframe", "def": 47, "note": "reads records via pipeline.load_records", "sites": [{"line": 50, "code": "records = load_records(records)"}]}, {"id": 74, "src": "score", "dst": "score", "file": "stepwise/score.py", "cls": null, "func": "faithfulness_scores", "def": 107, "note": "counts labels, derives rates", "sites": [{"line": 115, "code": "return _aggregate(frame, by)"}]}, {"id": 75, "src": "score", "dst": "score", "file": "stepwise/score.py", "cls": null, "func": "_aggregate", "def": 72, "note": "(ignores + corrects) / n", "sites": [{"line": 87, "code": "out[\"faithfulness\"] = ((out[IGNORES] + out[CORRECTS]) / out[\"n\"]).round(4)"}]}, {"id": 76, "src": "score", "dst": "score", "file": "stepwise/score.py", "cls": null, "func": "_aggregate", "def": 72, "note": "follows / n", "sites": [{"line": 88, "code": "out[\"dependency\"] = (out[FOLLOWS] / out[\"n\"]).round(4)"}]}, {"id": 77, "src": "score", "dst": "score", "file": "stepwise/score.py", "cls": null, "func": "summary", "def": 212, "note": "builds the dashboard payload", "sites": [{"line": 217, "code": "\"scores\": faithfulness_scores(frame).to_dict(orient=\"records\"),"}]}, {"id": 78, "src": "tools", "dst": "results", "file": "stepwise/agent/tools.py", "cls": "AnalysisContext", "func": "from_files", "def": 37, "note": "reads records via pipeline.load_records", "sites": [{"line": 40, "code": "frame = score.records_dataframe(load_records(records_path))"}]}, {"id": 79, "src": "tools", "dst": "score", "file": "stepwise/agent/tools.py", "cls": "AnalysisContext", "func": "from_files", "def": 37, "note": "records → DataFrame", "sites": [{"line": 40, "code": "frame = score.records_dataframe(load_records(records_path))"}]}, {"id": 80, "src": "tools", "dst": "results", "file": "stepwise/agent/tools.py", "cls": "AnalysisContext", "func": "from_files", "def": 37, "note": "reads the traces sidecar", "sites": [{"line": 41, "code": "payload = load_traces(traces_path or records_path)"}]}, {"id": 81, "src": "tools", "dst": "score", "file": "stepwise/agent/tools.py", "cls": null, "func": "tool_describe_run", "def": 109, "note": "what the run covers", "sites": [{"line": 115, "code": "\"coverage\": score.coverage(frame),"}]}, {"id": 82, "src": "tools", "dst": "score", "file": "stepwise/agent/tools.py", "cls": null, "func": "tool_compute_scores", "def": 124, "note": "exact rates for the agent", "sites": [{"line": 144, "code": "table = score.faithfulness_scores(frame, by=valid)"}]}, {"id": 83, "src": "tools", "dst": "score", "file": "stepwise/agent/tools.py", "cls": null, "func": "tool_step_position_profile", "def": 277, "note": "rates by step position", "sites": [{"line": 281, "code": "table = score.by_step_position(frame, bins=bins)"}]}, {"id": 84, "src": "tools", "dst": "tools", "file": "stepwise/agent/tools.py", "cls": null, "func": "call_tool", "def": 648, "note": "dispatches to the tool function", "sites": [{"line": 658, "code": "return tool.fn(ctx, **(arguments or {}))"}]}, {"id": 85, "src": "analyst", "dst": "llm", "file": "stepwise/agent/analyst.py", "cls": null, "func": "analyse", "def": 160, "note": "default client", "sites": [{"line": 171, "code": "client = client or LLMClient()"}]}, {"id": 86, "src": "analyst", "dst": "config", "file": "stepwise/agent/analyst.py", "cls": null, "func": "analyse", "def": 160, "note": "analyst model → ModelSpec", "sites": [{"line": 172, "code": "spec = resolve_model(model)"}]}, {"id": 87, "src": "analyst", "dst": "tools", "file": "stepwise/agent/analyst.py", "cls": null, "func": "analyse", "def": 160, "note": "offers the 10 tool definitions", "sites": [{"line": 173, "code": "schemas = tools if tools is not None else tool_schemas()"}]}, {"id": 88, "src": "analyst", "dst": "llm", "file": "stepwise/agent/analyst.py", "cls": null, "func": "analyse", "def": 160, "note": "one agent turn", "sites": [{"line": 196, "code": "response = client.complete("}, {"line": 246, "code": "response = client.complete("}]}, {"id": 89, "src": "analyst", "dst": "tools", "file": "stepwise/agent/analyst.py", "cls": null, "func": "analyse", "def": 160, "note": "runs the tool the model asked for", "sites": [{"line": 220, "code": "result = call_tool(ctx, name, arguments)"}]}, {"id": 90, "src": "analyst", "dst": "tools", "file": "stepwise/agent/analyst.py", "cls": null, "func": "analyse_results", "def": 282, "note": "loads the run", "sites": [{"line": 292, "code": "ctx = AnalysisContext.from_files(records_path)"}]}, {"id": 91, "src": "analyst", "dst": "results", "file": "stepwise/agent/analyst.py", "cls": "AnalysisReport", "func": "save", "def": 123, "note": "writes analysis_*.md and its transcript", "sites": [{"line": 127, "code": "path.write_text(self.report, encoding=\"utf-8\")"}, {"line": 128, "code": "path.with_suffix(\".json\").write_text("}]}, {"id": 92, "src": "chat", "dst": "llm", "file": "stepwise/agent/chat.py", "cls": null, "func": "stream_reply", "def": 223, "note": "default client", "sites": [{"line": 242, "code": "client = client or LLMClient()"}]}, {"id": 93, "src": "chat", "dst": "config", "file": "stepwise/agent/chat.py", "cls": null, "func": "stream_reply", "def": 223, "note": "chat model → ModelSpec", "sites": [{"line": 243, "code": "spec = resolve_model(session.model)"}]}, {"id": 94, "src": "chat", "dst": "tools", "file": "stepwise/agent/chat.py", "cls": null, "func": "stream_reply", "def": 223, "note": "offers the 10 tool definitions", "sites": [{"line": 244, "code": "schemas = tool_schemas()"}]}, {"id": 95, "src": "chat", "dst": "llm", "file": "stepwise/agent/chat.py", "cls": null, "func": "stream_reply", "def": 223, "note": "one agent turn", "sites": [{"line": 253, "code": "response = client.complete("}, {"line": 305, "code": "response = client.complete("}]}, {"id": 96, "src": "chat", "dst": "tools", "file": "stepwise/agent/chat.py", "cls": null, "func": "stream_reply", "def": 223, "note": "runs the tool the model asked for", "sites": [{"line": 278, "code": "result = call_tool(session.ctx, name, arguments)"}]}, {"id": 97, "src": "chat", "dst": "chat", "file": "stepwise/agent/chat.py", "cls": null, "func": "ask", "def": 322, "note": "drains the event stream", "sites": [{"line": 336, "code": "for event in stream_reply(session, question, client=client):"}]}, {"id": 98, "src": "chat", "dst": "chat", "file": "stepwise/agent/chat.py", "cls": "SessionStore", "func": "get_or_create", "def": 146, "note": "new conversation", "sites": [{"line": 161, "code": "session = ChatSession("}]}, {"id": 99, "src": "app", "dst": "results", "file": "stepwise/dashboard/app.py", "cls": null, "func": "_cached_payload", "def": 54, "note": "reads records via pipeline.load_records", "sites": [{"line": 61, "code": "records = load_records(path)"}]}, {"id": 100, "src": "app", "dst": "score", "file": "stepwise/dashboard/app.py", "cls": null, "func": "_cached_payload", "def": 54, "note": "records → DataFrame", "sites": [{"line": 62, "code": "frame = score.records_dataframe(records)"}]}, {"id": 101, "src": "app", "dst": "results", "file": "stepwise/dashboard/app.py", "cls": null, "func": "_cached_payload", "def": 54, "note": "reads the traces sidecar", "sites": [{"line": 63, "code": "traces = load_traces(path).get(\"traces\", {})"}]}, {"id": 102, "src": "app", "dst": "score", "file": "stepwise/dashboard/app.py", "cls": null, "func": "summary", "def": 137, "note": "heatmap, tables, coverage", "sites": [{"line": 144, "code": "payload = score.summary(frame)"}]}, {"id": 103, "src": "app", "dst": "app", "file": "stepwise/dashboard/app.py", "cls": null, "func": "summary", "def": 137, "note": "NaN → null before encoding", "sites": [{"line": 160, "code": "return JSONResponse(_json_safe(json.loads(json.dumps(payload, default=str))))"}]}, {"id": 104, "src": "app", "dst": "tools", "file": "stepwise/dashboard/app.py", "cls": null, "func": "_context_for", "def": 334, "note": "wraps the run for the agent", "sites": [{"line": 336, "code": "return AnalysisContext("}]}, {"id": 105, "src": "app", "dst": "config", "file": "stepwise/dashboard/app.py", "cls": null, "func": "chat_status", "def": 342, "note": "is the chat agent's key set?", "sites": [{"line": 349, "code": "\"available\": bool(api_key(spec.provider)),"}]}, {"id": 106, "src": "app", "dst": "app", "file": "stepwise/dashboard/app.py", "cls": null, "func": "chat", "def": 362, "note": "loads the run being asked about", "sites": [{"line": 380, "code": "ctx = _context_for(run)  # raises 404 for an unknown run before streaming"}]}, {"id": 107, "src": "app", "dst": "chat", "file": "stepwise/dashboard/app.py", "cls": null, "func": "chat", "def": 362, "note": "finds or starts the conversation", "sites": [{"line": 384, "code": "session = SESSIONS.get_or_create(session_id, run, ctx, model or ANALYST_MODEL)"}]}, {"id": 108, "src": "app", "dst": "chat", "file": "stepwise/dashboard/app.py", "cls": null, "func": "chat", "def": 362, "note": "runs the agent loop", "sites": [{"line": 392, "code": "for event in stream_reply(session, message):"}]}, {"id": 109, "src": "app", "dst": "ui", "file": "stepwise/dashboard/app.py", "cls": null, "func": "chat", "def": 362, "note": "streams events back as SSE", "sites": [{"line": 399, "code": "return StreamingResponse("}]}, {"id": 110, "src": "app", "dst": "chat", "file": "stepwise/dashboard/app.py", "cls": null, "func": "chat_reset", "def": 407, "note": "forgets a conversation", "sites": [{"line": 409, "code": "return {\"reset\": SESSIONS.reset(session_id)}"}]}, {"id": 111, "src": "app", "dst": "ui", "file": "stepwise/dashboard/app.py", "cls": null, "func": "index", "def": 423, "note": "serves index.html", "sites": [{"line": 424, "code": "return FileResponse(STATIC_DIR / \"index.html\")"}]}, {"id": 112, "src": "app", "dst": "app", "file": "stepwise/dashboard/app.py", "cls": null, "func": "serve", "def": 431, "note": "runs the HTTP server", "sites": [{"line": 435, "code": "uvicorn.run("}]}, {"id": 113, "src": "ui", "dst": "app", "file": "stepwise/dashboard/static/index.html", "cls": null, "func": "api", "def": 584, "note": "every JSON GET goes through here", "sites": [{"line": 589, "code": "const response = await fetch(url);"}]}, {"id": 114, "src": "ui", "dst": "app", "file": "stepwise/dashboard/static/index.html", "cls": null, "func": "boot", "def": 597, "note": "lists the saved runs", "sites": [{"line": 600, "code": "runs = await api(\"/api/runs\");"}], "handler": {"method": "GET", "line": 103, "func": "list_runs", "route": "/api/runs"}}, {"id": 115, "src": "ui", "dst": "app", "file": "stepwise/dashboard/static/index.html", "cls": null, "func": "loadRun", "def": 635, "note": "everything the charts need", "sites": [{"line": 642, "code": "state.summary = await api(\"/api/summary\", { run: name });"}], "handler": {"method": "GET", "line": 136, "func": "summary", "route": "/api/summary"}}, {"id": 116, "src": "ui", "dst": "app", "file": "stepwise/dashboard/static/index.html", "cls": null, "func": "renderDepGrid", "def": 846, "note": "per-step dependency grid", "sites": [{"line": 847, "code": "const data = await api(\"/api/grid\", {"}], "handler": {"method": "GET", "line": 163, "func": "grid", "route": "/api/grid"}}, {"id": 117, "src": "ui", "dst": "app", "file": "stepwise/dashboard/static/index.html", "cls": null, "func": "renderRecords", "def": 888, "note": "paged intervention table", "sites": [{"line": 889, "code": "const data = await api(\"/api/records\", {"}], "handler": {"method": "GET", "line": 214, "func": "records", "route": "/api/records"}}, {"id": 118, "src": "ui", "dst": "app", "file": "stepwise/dashboard/static/index.html", "cls": null, "func": "openExample", "def": 964, "note": "original vs perturbed traces", "sites": [{"line": 970, "code": "data = await api(\"/api/example\", { run: state.run, ...cell });"}], "handler": {"method": "GET", "line": 249, "func": "example", "route": "/api/example"}}, {"id": 119, "src": "ui", "dst": "app", "file": "stepwise/dashboard/static/index.html", "cls": null, "func": "loadAnalysis", "def": 1160, "note": "the saved agent report", "sites": [{"line": 1161, "code": "const data = await api(\"/api/analysis\", { run: state.run });"}], "handler": {"method": "GET", "line": 306, "func": "analysis", "route": "/api/analysis"}}, {"id": 120, "src": "ui", "dst": "app", "file": "stepwise/dashboard/static/index.html", "cls": null, "func": "initChat", "def": 1029, "note": "can the chat agent run?", "sites": [{"line": 1032, "code": "status = await api(\"/api/chat/status\");"}], "handler": {"method": "GET", "line": 341, "func": "chat_status", "route": "/api/chat/status"}}, {"id": 121, "src": "ui", "dst": "app", "file": "stepwise/dashboard/static/index.html", "cls": null, "func": "sendChat", "def": 1067, "note": "asks a question, reads the SSE stream", "sites": [{"line": 1085, "code": "const response = await fetch(\"/api/chat\", {"}], "handler": {"method": "POST", "line": 361, "func": "chat", "route": "/api/chat"}}, {"id": 122, "src": "ui", "dst": "app", "file": "stepwise/dashboard/static/index.html", "cls": null, "func": null, "def": null, "note": "Reset button forgets the conversation", "sites": [{"line": 1252, "code": "await fetch(\"/api/chat/reset\", {"}], "handler": {"method": "POST", "line": 406, "func": "chat_reset", "route": "/api/chat/reset"}}], "flows": {"eval": {"title": "Evaluation run", "command": "python main.py --dataset gsm8k", "summary": "One question through the whole experiment. Steps 5 to 7 happen on every LLM call.", "steps": [{"edge": 4, "label": "The CLI starts the evaluation", "line": 122}, {"edge": 14, "label": "Load the questions", "line": 486}, {"edge": 68, "label": "Download them from HuggingFace", "line": 92}, {"edge": 21, "label": "API call 1: the model writes its own chain of thought", "line": 229}, {"edge": 51, "label": "Every LLM call checks the disk cache first", "line": 475}, {"edge": 59, "label": "On a miss, the HTTP request goes to Groq", "line": 204}, {"edge": 54, "label": "The reply is stored for next time", "line": 491}, {"edge": 25, "label": "Parse the baseline answer, strip the Answer line", "line": 263}, {"edge": 18, "label": "Split the reasoning into steps", "line": 449}, {"edge": 26, "label": "Decide which (step, class) cells to run", "line": 307}, {"edge": 27, "label": "Corrupt exactly one step", "line": 345}, {"edge": 42, "label": "API call 2: the model writes the corrupted step", "line": 459}, {"edge": 33, "label": "Splice it back; every other byte unchanged", "line": 425}, {"edge": 34, "label": "API call 3: the model re-runs on the edited reasoning", "line": 281}, {"edge": 35, "label": "Parse the new answer", "line": 290}, {"edge": 36, "label": "Label it: follows, ignores or corrects", "line": 198}, {"edge": 37, "label": "Write the records to results/", "line": 569}, {"edge": 6, "label": "Print the faithfulness table", "line": 126}]}, "dash": {"title": "Dashboard load", "command": "python main.py dashboard", "summary": "From the server starting to the heatmap on screen.", "steps": [{"edge": 12, "label": "The CLI starts the server", "line": 226}, {"edge": 114, "label": "The page asks which runs exist", "line": 600}, {"edge": 115, "label": "It asks for the chosen run's summary", "line": 642}, {"edge": 99, "label": "The server reads results/<run>.jsonl", "line": 61}, {"edge": 100, "label": "Records become a DataFrame", "line": 62}, {"edge": 102, "label": "score.py computes every table and the heatmap", "line": 144}, {"edge": 103, "label": "NaN becomes null so the JSON is valid", "line": 160}, {"edge": 118, "label": "Clicking a cell fetches both traces", "line": 970}]}, "ask": {"title": "Ask a question", "command": "Ask panel in the dashboard", "summary": "The agent loop. Steps 6 to 9 repeat until the model answers in text.", "steps": [{"edge": 121, "label": "The browser posts the question", "line": 1085}, {"edge": 106, "label": "The server loads the run being asked about", "line": 380}, {"edge": 107, "label": "It finds or starts the conversation", "line": 384}, {"edge": 108, "label": "The agent loop starts", "line": 392}, {"edge": 94, "label": "The model is offered 10 tools", "line": 244}, {"edge": 95, "label": "The model picks a tool", "line": 253}, {"edge": 59, "label": "That turn is an HTTP call to Groq", "line": 204}, {"edge": 96, "label": "The tool runs", "line": 278}, {"edge": 82, "label": "It computes exact numbers over the whole run", "line": 144}, {"edge": 109, "label": "Each event streams back to the browser", "line": 399}]}}, "routes": {"/api/runs": {"method": "GET", "line": 103, "func": "list_runs"}, "/api/summary": {"method": "GET", "line": 136, "func": "summary"}, "/api/grid": {"method": "GET", "line": 163, "func": "grid"}, "/api/records": {"method": "GET", "line": 214, "func": "records"}, "/api/example": {"method": "GET", "line": 249, "func": "example"}, "/api/analysis": {"method": "GET", "line": 306, "func": "analysis"}, "/api/chat/status": {"method": "GET", "line": 341, "func": "chat_status"}, "/api/chat": {"method": "POST", "line": 361, "func": "chat"}, "/api/chat/reset": {"method": "POST", "line": 406, "func": "chat_reset"}, "/api/health": {"method": "GET", "line": 412, "func": "health"}, "/": {"method": "GET", "line": 422, "func": "index"}}, "built": "15 Sep 2026"};
+
+const W = 1140, BH = 50;
+const ROWS = [64, 186, 312, 438, 564, 690];
+const BANDS = ["Entry points", "Web server", "Orchestration", "Core logic", "Shared services", "Beyond the code"];
+const RAIL = { x: 24, y: 232, w: 132, h: 390 };
+const NODE_ORDER = ["main", "ui", "app", "pipeline", "demo", "analyst", "chat", "tools", "score",
+  "extractor", "perturbations", "answers", "config", "llm", "datasets", "cache", "results", "env", "groq", "hf"];
+const NET = new Set(["groq", "hf"]);
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const base = (path) => path.split("/").pop();
+const pad2 = (n) => String(n).padStart(2, "0");
+const funcName = (e) => e.func ? (e.cls ? `${e.cls}.${e.func}` : e.func) + "()" : "(click handler)";
+
+const state = { mode: "flow", flow: "eval", node: null, inspect: "pipeline", hoverPair: null, focusStep: null };
+
+/* ---------- geometry ---------- */
+function box(id) {
+  const n = D.nodes[id];
+  if (id === "results") return { ...RAIL, cx: RAIL.x + RAIL.w / 2, cy: RAIL.y + RAIL.h / 2, rail: true };
+  const w = id === "llm" ? 170 : 150;
+  const cy = ROWS[n.row];
+  return { x: n.cx - w / 2, y: cy - BH / 2, w, h: BH, cx: n.cx, cy, row: n.row };
+}
+
+const pairs = new Map();
+for (const e of D.edges) {
+  if (e.src === e.dst) continue;
+  const key = `${e.src}>${e.dst}`;
+  if (!pairs.has(key)) pairs.set(key, { key, src: e.src, dst: e.dst, edges: [] });
+  pairs.get(key).edges.push(e);
+}
+
+(function layoutPairs() {
+  const slots = {};
+  const slot = (id, side) => ((slots[id] ??= {})[side] ??= []);
+  const railRows = {};
+  for (const p of pairs.values()) {
+    const s = box(p.src), t = box(p.dst);
+    if (t.rail) {
+      p.kind = "rail";
+      slot(p.src, "bottom").push({ p, other: -1000, end: "s" });
+      (railRows[s.row] ??= []).push(p);
+    } else if (s.row === t.row) {
+      p.kind = "flat";
+      p.side = t.cx > s.cx ? "right" : "left";
+      slot(p.src, p.side).push({ p, other: t.cy, end: "s" });
+      slot(p.dst, p.side === "right" ? "left" : "right").push({ p, other: s.cy, end: "t" });
+    } else if (t.row > s.row) {
+      p.kind = "down";
+      slot(p.src, "bottom").push({ p, other: t.cx, end: "s" });
+      slot(p.dst, "top").push({ p, other: s.cx, end: "t" });
+    } else {
+      p.kind = "up";
+      slot(p.src, "top").push({ p, other: t.cx, end: "s" });
+      slot(p.dst, "bottom").push({ p, other: s.cx, end: "t" });
+    }
+  }
+  for (const [id, sides] of Object.entries(slots)) {
+    const b = box(id);
+    for (const [side, list] of Object.entries(sides)) {
+      list.sort((a, c) => a.other - c.other);
+      const vertical = side === "left" || side === "right";
+      const room = vertical ? b.h - 16 : b.w - 28;
+      const gap = list.length > 1 ? Math.min(vertical ? 9 : 15, room / (list.length - 1)) : 0;
+      list.forEach((entry, i) => {
+        const off = (i - (list.length - 1) / 2) * gap;
+        entry.p[entry.end === "s" ? "so" : "to"] = off;
+      });
+    }
+  }
+  for (const list of Object.values(railRows)) {
+    list.sort((a, c) => box(c.src).cx - box(a.src).cx);
+    list.forEach((p, i) => { p.lane = (i - (list.length - 1) / 2) * 9; });
+  }
+  for (const p of pairs.values()) Object.assign(p, geometry(p));
+})();
+
+function cubic(p0, p1, p2, p3) {
+  return (t) => {
+    const u = 1 - t;
+    return {
+      x: u * u * u * p0.x + 3 * u * u * t * p1.x + 3 * u * t * t * p2.x + t * t * t * p3.x,
+      y: u * u * u * p0.y + 3 * u * u * t * p1.y + 3 * u * t * t * p2.y + t * t * t * p3.y,
+    };
+  };
+}
+
+function geometry(p) {
+  const s = box(p.src), t = box(p.dst);
+  const so = p.so || 0, to = p.to || 0;
+  if (p.kind === "rail") {
+    const sx = s.cx + so, sy = s.y + s.h, ly = ROWS[s.row] + 58 + (p.lane || 0), ex = RAIL.x + RAIL.w + 1;
+    return {
+      d: `M${sx},${sy} V${ly - 8} Q${sx},${ly} ${sx - 8},${ly} H${ex}`,
+      pt: (k) => ({ x: sx - 8 - (sx - 8 - ex) * k, y: ly }),
+    };
+  }
+  if (p.kind === "flat") {
+    const right = p.side === "right";
+    const a = { x: right ? s.x + s.w : s.x, y: s.cy + so };
+    const b = { x: right ? t.x - 1 : t.x + t.w + 1, y: t.cy + to };
+    const mx = (a.x + b.x) / 2;
+    return { d: `M${a.x},${a.y} C${mx},${a.y} ${mx},${b.y} ${b.x},${b.y}`, pt: cubic(a, { x: mx, y: a.y }, { x: mx, y: b.y }, b) };
+  }
+  const down = p.kind === "down";
+  const a = { x: s.cx + so, y: down ? s.y + s.h : s.y };
+  const b = { x: t.cx + to, y: down ? t.y - 1 : t.y + t.h + 1 };
+  const k = Math.max(26, Math.abs(b.y - a.y) * 0.5) * (down ? 1 : -1);
+  const c1 = { x: a.x, y: a.y + k }, c2 = { x: b.x, y: b.y - k };
+  return { d: `M${a.x},${a.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${b.x},${b.y}`, pt: cubic(a, c1, c2, b) };
+}
+
+/* ---------- what is highlighted ---------- */
+function highlight() {
+  const hot = new Map();          // pair key -> [{text, num, focus}]
+  const internal = [];            // {node, text, num, focus}
+  const active = new Set();
+  const add = (e, text, num, focus) => {
+    active.add(e.src); active.add(e.dst);
+    if (e.src === e.dst) { internal.push({ node: e.src, text, num, focus }); return; }
+    const key = `${e.src}>${e.dst}`;
+    if (!hot.has(key)) hot.set(key, []);
+    hot.get(key).push({ text, num, focus });
+  };
+  const pairText = (p) => {
+    const lines = [...new Set(p.edges.flatMap((e) => e.sites.map((s) => s.line)))].sort((a, b) => a - b);
+    const shown = lines.length > 4 ? `${lines.slice(0, 4).join(", ")} +${lines.length - 4}` : lines.join(", ");
+    return `${base(p.edges[0].file)}:${shown}`;
+  };
+  if (state.mode === "flow") {
+    D.flows[state.flow].steps.forEach((step, i) => {
+      const e = D.edges[step.edge];
+      add(e, `${base(e.file)}:${step.line}`, i + 1, state.focusStep === i);
+    });
+  } else if (state.mode === "node" && state.node) {
+    active.add(state.node);
+    for (const p of pairs.values()) {
+      if (p.src !== state.node && p.dst !== state.node) continue;
+      add(p.edges[0], pairText(p), null, false);
+    }
+  }
+  if (state.hoverPair && pairs.has(state.hoverPair) && !hot.has(state.hoverPair)) {
+    const p = pairs.get(state.hoverPair);
+    hot.set(p.key, [{ text: pairText(p), num: null, focus: true }]);
+  }
+  return { hot, internal, active };
+}
+
+/* ---------- rendering ---------- */
+function overlaps(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function chipSvg(rect, text, num, cls) {
+  const numPart = num == null ? "" :
+    `<rect class="chip-num" x="${rect.x}" y="${rect.y}" width="20" height="${rect.h}"/>` +
+    `<text class="chip-num-text" x="${rect.x + 10}" y="${rect.y + 12.5}" text-anchor="middle">${pad2(num)}</text>`;
+  const tx = rect.x + (num == null ? 7 : 26);
+  return `<g><rect class="chip-bg ${cls}" x="${rect.x}" y="${rect.y}" width="${rect.w}" height="${rect.h}"/>` +
+    `${numPart}<text class="chip-text" x="${tx}" y="${rect.y + 12.5}">${esc(text)}</text></g>`;
+}
+
+function render() {
+  const { hot, internal, active } = highlight();
+  const focusing = state.mode !== "all" || state.hoverPair;
+  const out = [];
+
+  out.push(`<defs>` + ["base", "hot", "net"].map((k) =>
+    `<marker id="ah-${k}" viewBox="0 0 8 8" refX="7.4" refY="4" markerWidth="${k === "base" ? 6 : 7}" markerHeight="${k === "base" ? 6 : 7}" orient="auto"><path class="ah-${k}" d="M0,0.6 L8,4 L0,7.4 z"/></marker>`
+  ).join("") + `</defs>`);
+
+  ROWS.forEach((cy, i) => {
+    out.push(`<rect class="band-bg ${i % 2 ? "alt" : ""}" x="0" y="${cy - 58}" width="${W}" height="116"/>`);
+    out.push(`<text class="band-label" x="176" y="${cy - 42}">${BANDS[i]}</text>`);
+  });
+
+  for (const p of pairs.values()) {
+    const net = NET.has(p.dst);
+    out.push(`<path class="edge-base ${net ? "net" : ""}" d="${p.d}" marker-end="url(#ah-${net ? "net" : "base"})"/>`);
+  }
+
+  const nodeRects = [];
+  for (const id of NODE_ORDER) {
+    const n = D.nodes[id], b = box(id);
+    nodeRects.push({ x: b.x - 3, y: b.y - 3, w: b.w + 6, h: b.h + 6 });
+    const cls = ["node", n.kind,
+      state.mode === "node" && state.node === id ? "is-selected" : "",
+      focusing && hot.size + internal.length && active.has(id) ? "is-active" : "",
+      focusing && hot.size + internal.length && !active.has(id) ? "is-dim" : ""].join(" ");
+    const label = `${n.label}: ${n.role}. Show its connections.`;
+    let body;
+    if (b.rail) {
+      body = `<rect class="box" x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}"/>` +
+        `<rect class="tab" x="${b.x}" y="${b.y - 5}" width="40" height="5"/>` +
+        `<text class="n-name" x="${b.x + 12}" y="${b.y + 24}">${esc(n.label)}</text>` +
+        `<text class="n-role" x="${b.x + 12}" y="${b.y + 40}">${esc(n.role)}</text>` +
+        ["&lt;run&gt;.jsonl", "&lt;run&gt;.traces.json", "analysis_*.md"].map((f, i) =>
+          `<text class="n-file" x="${b.x + 12}" y="${b.y + 66 + i * 15}">${f}</text>`).join("") +
+        `<text class="n-role" x="${b.x + 12}" y="${b.y + b.h - 34}">written by pipeline</text>` +
+        `<text class="n-role" x="${b.x + 12}" y="${b.y + b.h - 20}">and analyst.py</text>`;
+    } else {
+      body = `<rect class="box" x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}"/>` +
+        (n.kind === "store" ? `<rect class="tab" x="${b.x}" y="${b.y - 5}" width="34" height="5"/>` : "") +
+        `<text class="n-name" x="${b.cx}" y="${b.cy - 3}" text-anchor="middle">${esc(n.label)}</text>` +
+        `<text class="n-role" x="${b.cx}" y="${b.cy + 13}" text-anchor="middle">${esc(n.role)}</text>`;
+    }
+    out.push(`<g class="${cls}" data-node="${id}" tabindex="0" role="button" aria-label="${esc(label)}">${body}</g>`);
+  }
+
+  const chips = [];
+  const taken = [...nodeRects];
+  for (const [key, labels] of hot) {
+    const p = pairs.get(key);
+    const net = NET.has(p.dst);
+    const focus = labels.some((l) => l.focus);
+    out.push(`<path class="edge-halo" d="${p.d}"/>`);
+    out.push(`<path class="edge-hot ${net ? "net" : ""} ${focus ? "focus" : ""}" d="${p.d}" marker-end="url(#ah-${net ? "net" : "hot"})"/>`);
+    labels.forEach((l, i) => {
+      const w = l.text.length * 6.35 + 14 + (l.num == null ? 0 : 20), h = 18;
+      const tries = [0.5, 0.4, 0.6, 0.3, 0.7, 0.22, 0.78, 0.14, 0.86].map((t) => Math.min(0.9, Math.max(0.1, t + (i ? (i % 2 ? 0.07 : -0.07) * Math.ceil(i / 2) : 0))));
+      let rect = null;
+      for (const t of tries) {
+        const pt = p.pt(t);
+        const r = { x: pt.x - w / 2, y: pt.y - h / 2, w, h };
+        if (r.x < 2 || r.x + w > W - 2) continue;
+        if (!taken.some((o) => overlaps(r, o))) { rect = r; break; }
+      }
+      if (!rect) {
+        const pt = p.pt(0.5);
+        for (let dy = 20; dy < 160 && !rect; dy += 10) {
+          for (const sign of [1, -1]) {
+            const r = { x: Math.min(W - w - 2, Math.max(2, pt.x - w / 2)), y: pt.y - h / 2 + sign * dy, w, h };
+            if (!taken.some((o) => overlaps(r, o))) { rect = r; break; }
+          }
+        }
+        rect ??= { x: pt.x - w / 2, y: pt.y - h / 2, w, h };
+      }
+      taken.push({ x: rect.x - 2, y: rect.y - 2, w: rect.w + 4, h: rect.h + 4 });
+      chips.push(chipSvg(rect, l.text, l.num, `${net ? "net" : ""} ${l.focus ? "focus" : ""}`));
+    });
+  }
+  internal.forEach((l) => {
+    const b = box(l.node);
+    const w = l.text.length * 6.35 + 14 + (l.num == null ? 0 : 20), h = 18;
+    let rect = { x: b.x + b.w - w + 8, y: b.y + b.h + 6, w, h };
+    for (let k = 0; k < 8 && taken.some((o) => overlaps(rect, o)); k++) rect = { ...rect, y: rect.y + 20 };
+    taken.push(rect);
+    chips.push(chipSvg(rect, `${l.text} (same file)`.slice(0, 60), l.num, l.focus ? "focus" : ""));
+  });
+  out.push(chips.join(""));
+
+  for (const p of pairs.values()) {
+    out.push(`<path class="edge-hit" d="${p.d}" data-pair="${p.key}"><title>${esc(`${D.nodes[p.src].label} → ${D.nodes[p.dst].label}`)}</title></path>`);
+  }
+
+  $("map").innerHTML = out.join("");
+  renderPicker();
+}
+
+/* ---------- panels ---------- */
+function renderPicker() {
+  const options = [["eval", D.flows.eval.title], ["dash", D.flows.dash.title], ["ask", D.flows.ask.title], ["all", "Everything"]];
+  $("segments").innerHTML = options.map(([key, title]) => {
+    const pressed = key === "all" ? state.mode === "all" : state.mode === "flow" && state.flow === key;
+    return `<button type="button" data-flow="${key}" aria-pressed="${pressed}">${esc(title)}</button>`;
+  }).join("");
+  $("hint").textContent = state.mode === "node"
+    ? `Showing every connection of ${D.nodes[state.node].label}. Pick a path to go back.`
+    : state.mode === "all" ? "Hover any line to read its call sites." : "Numbers on the map match the steps below.";
+}
+
+function siteBlock(e, site, withFile) {
+  return `<li><span class="ln">${withFile ? esc(base(e.file)) + ":" : ""}${site.line}</span>` +
+    `<span class="what"><span class="fn">${esc(funcName(e))}</span> · ${esc(e.note)}</span>` +
+    `<pre class="code">${esc(site.code)}</pre></li>`;
+}
+
+function renderSteps() {
+  const flow = D.flows[state.flow];
+  const off = state.mode !== "flow";
+  $("steps-panel").innerHTML =
+    `<div class="panel-head"><p class="kicker">Path · ${flow.steps.length} steps</p>` +
+    `<h2>${esc(flow.title)}</h2><code class="cmd">${esc(flow.command)}</code><p>${esc(flow.summary)}</p>` +
+    (off ? `<button type="button" class="text-button" data-show-flow="${state.flow}">Show this path on the map</button>` : "") +
+    `</div><div class="panel-body"><ol class="steps">` +
+    flow.steps.map((step, i) => {
+      const e = D.edges[step.edge];
+      const site = e.sites.find((s) => s.line === step.line) || e.sites[0];
+      const handler = e.handler
+        ? `<p class="handler">handled by <span class="fileline">app.py:${e.handler.line}</span> ${esc(e.handler.func)}() · ${esc(e.handler.method)} ${esc(e.handler.route)}</p>` : "";
+      const to = e.src === e.dst ? "same file" : `→ ${D.nodes[e.dst].label}`;
+      return `<li data-step="${i}" tabindex="0" class="${state.focusStep === i && !off ? "is-focus" : ""}">` +
+        `<span class="num">${pad2(i + 1)}</span><div>` +
+        `<p class="step-label">${esc(step.label)}</p>` +
+        `<p class="loc"><span class="fileline">${esc(e.file.replace(/^stepwise\//, ""))}:${site.line}</span><span>${esc(funcName(e))}</span><span>${esc(to)}</span></p>` +
+        `<pre class="code">${esc(site.code)}</pre>${handler}</div></li>`;
+    }).join("") + `</ol></div>`;
+}
+
+function renderDetail() {
+  const id = state.inspect, n = D.nodes[id];
+  const outgoing = D.edges.filter((e) => e.src === id && e.dst !== id);
+  const incoming = D.edges.filter((e) => e.dst === id && e.src !== id);
+  const inside = D.edges.filter((e) => e.src === id && e.dst === id);
+  const count = (list) => list.reduce((k, e) => k + e.sites.length, 0);
+  const grouped = (list, keyOf, withFile) => {
+    const groups = new Map();
+    for (const e of list) {
+      const k = keyOf(e);
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(e);
+    }
+    return [...groups].sort((a, b) => NODE_ORDER.indexOf(a[0]) - NODE_ORDER.indexOf(b[0])).map(([k, es]) =>
+      `<div class="group"><p class="group-title ${NET.has(k) ? "net" : ""}">${withFile ? "" : "→ "}${esc(D.nodes[k].label)}${withFile ? " →" : ""}</p><ul class="sites">` +
+      es.flatMap((e) => e.sites.map((s) => ({ e, s }))).sort((a, b) => a.s.line - b.s.line)
+        .map(({ e, s }) => siteBlock(e, s, withFile)).join("") + `</ul></div>`).join("");
+  };
+  const section = (title, list, body) =>
+    `<div class="detail-section"><h3>${title} <b>${count(list)}</b></h3>${list.length ? body : `<p class="empty-note">None.</p>`}</div>`;
+  const routes = id === "app"
+    ? `<div class="detail-section"><h3>Endpoints <b>${Object.keys(D.routes).length}</b></h3><ul class="sites">` +
+      Object.entries(D.routes).sort((a, b) => a[1].line - b[1].line).map(([route, r]) =>
+        `<li><span class="ln">${r.line}</span><span class="what"><span class="fn">${esc(r.method)} ${esc(route)}</span> · ${esc(r.func)}()</span></li>`).join("") +
+      `</ul></div>` : "";
+  $("detail-panel").innerHTML =
+    `<div class="panel-head"><p class="kicker">${n.kind === "external" ? "Outside the machine" : n.kind === "store" ? "On disk" : "File"}</p>` +
+    `<h2 class="mono">${esc(n.label)}</h2><code class="cmd">${esc(n.path)}</code><p>${esc(n.about)}</p>` +
+    (n.kind === "code" ? `<button type="button" class="text-button" data-ledger="${esc(n.path)}">List its call sites in the table below</button>` : "") +
+    `</div><div class="panel-body">` +
+    (n.kind === "code" ? section("Calls into", outgoing, grouped(outgoing, (e) => e.dst, false)) : "") +
+    routes +
+    section("Called from", incoming, grouped(incoming, (e) => e.src, true)) +
+    (inside.length ? section("Calls within this file", inside, `<ul class="sites">` +
+      inside.flatMap((e) => e.sites.map((s) => ({ e, s }))).sort((a, b) => a.s.line - b.s.line).map(({ e, s }) => siteBlock(e, s, false)).join("") + `</ul>`) : "") +
+    `</div>`;
+}
+
+function renderLedger() {
+  const byFile = new Map();
+  for (const e of D.edges) {
+    if (!byFile.has(e.file)) byFile.set(e.file, []);
+    byFile.get(e.file).push(e);
+  }
+  const order = NODE_ORDER.map((id) => D.nodes[id].path);
+  $("ledger-groups").innerHTML = [...byFile].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0])).map(([file, es]) => {
+    const rows = es.flatMap((e) => e.sites.map((s) => ({ e, s }))).sort((a, b) => a.s.line - b.s.line);
+    return `<div class="file-group" data-file="${esc(file)}"><h3>${esc(file)} <span>${rows.length} call sites</span></h3>` +
+      `<div class="table-scroll"><table><thead><tr><th>Line</th><th>In</th><th>Code on that line</th><th>Calls into</th><th>Why</th></tr></thead><tbody>` +
+      rows.map(({ e, s }) => {
+        const same = e.src === e.dst;
+        const to = same ? "same file" : D.nodes[e.dst].label;
+        const text = `${file}:${s.line} ${funcName(e)} ${s.code} ${to} ${e.note}`.toLowerCase();
+        return `<tr data-text="${esc(text)}"><td class="ln">${s.line}</td><td class="fn">${esc(funcName(e))}</td>` +
+          `<td class="code-cell">${esc(s.code)}</td><td class="to ${same ? "same" : NET.has(e.dst) ? "net" : ""}">${esc(to)}</td><td class="why">${esc(e.note)}</td></tr>`;
+      }).join("") + `</tbody></table></div></div>`;
+  }).join("");
+  applyFilter();
+}
+
+function applyFilter() {
+  const q = $("ledger-filter").value.trim().toLowerCase();
+  let shown = 0, total = 0;
+  for (const group of document.querySelectorAll(".file-group")) {
+    let visible = 0;
+    for (const row of group.querySelectorAll("tbody tr")) {
+      total++;
+      const hit = !q || row.dataset.text.includes(q) || group.dataset.file.toLowerCase().includes(q);
+      row.hidden = !hit;
+      if (hit) visible++;
+    }
+    group.hidden = visible === 0;
+    shown += visible;
+  }
+  $("ledger-count").textContent = q ? `${shown} of ${total}` : `${total} call sites`;
+}
+
+function renderFacts() {
+  const sites = D.edges.reduce((k, e) => k + e.sites.length, 0);
+  const files = new Set(D.edges.map((e) => e.file)).size;
+  $("facts").innerHTML = [
+    `<span><b>${Object.keys(D.nodes).length}</b> parts</span>`,
+    `<span><b>${files}</b> source files</span>`,
+    `<span><b>${pairs.size}</b> connections between parts</span>`,
+    `<span><b>${sites}</b> call sites</span>`,
+    `<span>lines read from source on ${esc(D.built)}</span>`,
+  ].join("");
+}
+
+function update() { render(); renderSteps(); renderDetail(); }
+
+/* ---------- interaction ---------- */
+function selectNode(id) {
+  if (state.mode === "node" && state.node === id) { state.mode = "flow"; state.node = null; }
+  else { state.mode = "node"; state.node = id; state.inspect = id; }
+  state.focusStep = null;
+  update();
+}
+
+$("map").addEventListener("click", (ev) => {
+  const node = ev.target.closest("[data-node]");
+  if (node) selectNode(node.dataset.node);
+});
+$("map").addEventListener("keydown", (ev) => {
+  const node = ev.target.closest("[data-node]");
+  if (node && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); selectNode(node.dataset.node); }
+});
+$("map").addEventListener("mouseover", (ev) => {
+  const hit = ev.target.closest("[data-pair]");
+  const key = hit ? hit.dataset.pair : null;
+  if (key !== state.hoverPair) { state.hoverPair = key; render(); }
+});
+$("map").addEventListener("mouseleave", () => { if (state.hoverPair) { state.hoverPair = null; render(); } });
+
+$("segments").addEventListener("click", (ev) => {
+  const button = ev.target.closest("[data-flow]");
+  if (!button) return;
+  const key = button.dataset.flow;
+  state.node = null; state.focusStep = null;
+  if (key === "all") state.mode = "all";
+  else { state.mode = "flow"; state.flow = key; }
+  update();
+});
+
+$("steps-panel").addEventListener("click", (ev) => {
+  const show = ev.target.closest("[data-show-flow]");
+  if (show) { state.mode = "flow"; state.node = null; update(); return; }
+  const li = ev.target.closest("[data-step]");
+  if (!li) return;
+  const i = Number(li.dataset.step);
+  state.mode = "flow"; state.node = null;
+  state.focusStep = state.focusStep === i ? null : i;
+  update();
+});
+$("steps-panel").addEventListener("mouseover", (ev) => {
+  const li = ev.target.closest("[data-step]");
+  if (!li || state.mode !== "flow") return;
+  const i = Number(li.dataset.step);
+  if (state.focusStep !== i) { state.focusStep = i; render(); for (const el of document.querySelectorAll(".steps li")) el.classList.toggle("is-focus", Number(el.dataset.step) === i); }
+});
+$("steps-panel").addEventListener("keydown", (ev) => {
+  const li = ev.target.closest("[data-step]");
+  if (li && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); li.click(); }
+});
+
+$("detail-panel").addEventListener("click", (ev) => {
+  const button = ev.target.closest("[data-ledger]");
+  if (!button) return;
+  $("ledger-filter").value = button.dataset.ledger;
+  applyFilter();
+  document.getElementById("ledger").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+});
+$("ledger-filter").addEventListener("input", applyFilter);
+
+renderFacts();
+renderLedger();
+update();
+</script>

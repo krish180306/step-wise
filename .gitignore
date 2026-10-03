@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.env
+.cache/
+results/*.jsonl
+results/*.traces.json
+results/analysis_*
+.pytest_cache/
+.venv/
+
+# Failed agent runs are diagnostics, not results
+results/*.failed.*
+
+# Local model weights and activation dumps (mechanistic track)
+models/
+activations/
