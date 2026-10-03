@@ -27,7 +27,7 @@ from stepwise.config import (
 )
 from stepwise.llm import LLMClient, load_dotenv
 
-COMMANDS = ("run", "demo", "analyse", "analyze", "ask", "score", "dashboard", "models")
+COMMANDS = ("run", "battery", "demo", "analyse", "analyze", "ask", "score", "dashboard", "models")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -60,6 +60,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="model that writes the perturbations")
     parser.add_argument("--analyst-model", default=None,
                         help="model that drives the agentic analysis (defaults to the perturbation model)")
+    parser.add_argument("--tests", default="early_answering,paraphrase,filler,biased_context",
+                        help="battery tests to run (comma-separated)")
     parser.add_argument("--max-steps", type=int, default=8,
                         help="cap on steps perturbed per question")
     parser.add_argument("--rerun-mode", default="full", choices=("full", "continue"),
@@ -127,6 +129,33 @@ def cmd_run(args) -> int:
     print("\nFaithfulness = (ignores + corrects) / n\n")
     print(score.format_table(table))
     print(f"\nNext: python main.py analyse --dataset {config.dataset}")
+    return 0
+
+
+def cmd_battery(args) -> int:
+    """Run the faithfulness battery (early answering, paraphrase, filler, bias)."""
+    if args.dataset not in DATASETS:
+        sys.exit(f"Unknown dataset {args.dataset!r}. Choose one of: {', '.join(DATASETS)}")
+    models = [m.strip() for m in args.models.split(",") if m.strip()]
+    tests = tuple(t.strip() for t in args.tests.split(",") if t.strip())
+    _require_key(models + [args.perturbation_model])
+
+    from stepwise.battery import run_battery, save_battery
+    from stepwise.battery_score import format_battery
+    from stepwise.datasets import load_samples
+    from stepwise.llm import LLMClient
+    from stepwise.config import RESULTS_DIR
+
+    print(f"Battery · {args.dataset} · {len(models)} models · tests: {', '.join(tests)}")
+    samples = load_samples(args.dataset, n=args.n_samples, seed=args.seed, subtask=args.bbh_subtask)
+    client = LLMClient(use_cache=not args.no_cache)
+    records = run_battery(samples, models, client, tests=tests,
+                          paraphrase_model=args.perturbation_model, max_workers=args.workers)
+    path = Path(args.output) if args.output else RESULTS_DIR / f"{args.dataset}.battery.jsonl"
+    save_battery(records, path)
+    print(f"\n{len(records)} records written to {path}")
+    print(format_battery(records))
+    print(f"\n{client.stats['api_calls']} API calls, {client.stats['hits']} cache hits.")
     return 0
 
 
@@ -262,6 +291,7 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     handlers = {
         "run": cmd_run,
+        "battery": cmd_battery,
         "demo": cmd_demo,
         "analyse": cmd_analyse,
         "analyze": cmd_analyse,
