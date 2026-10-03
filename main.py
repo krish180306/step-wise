@@ -27,7 +27,7 @@ from stepwise.config import (
 )
 from stepwise.llm import LLMClient, load_dotenv
 
-COMMANDS = ("run", "battery", "mech", "mcp", "verify", "demo", "analyse", "analyze", "ask", "score", "dashboard", "models")
+COMMANDS = ("run", "battery", "mech", "mcp", "verify", "validate", "judge", "demo", "analyse", "analyze", "ask", "score", "dashboard", "models")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -258,6 +258,57 @@ def cmd_verify(args) -> int:
     return 0
 
 
+def cmd_validate(args) -> int:
+    """Measurement validation: the label regression, plus kappa against human
+    annotations (if any) and the LLM judge (if a judge file exists)."""
+    records_path = RESULTS_DIR / f"{args.dataset}.jsonl"
+    if not records_path.exists():
+        sys.exit(f"No results at {records_path}.")
+    from stepwise import validation
+    from stepwise.pipeline import load_records
+    records = load_records(records_path)
+
+    print(validation.format_regression(validation.label_regression(records)))
+
+    ann_path = RESULTS_DIR / f"{args.dataset}.annotations.json"
+    if ann_path.exists():
+        store = validation.AnnotationStore.load(ann_path)
+        r = validation.validate_against_human(records, store)
+        print(f"\nAutomatic vs human: kappa={r['kappa']} ({r.get('strength')}), "
+              f"n={r['annotated']}, disagreements={r.get('disagreements')}")
+    else:
+        print(f"\n(no human annotations yet — label cells in the dashboard explorer; "
+              f"they save to {ann_path.name})")
+
+    judge_path = RESULTS_DIR / f"{args.dataset}.judge.jsonl"
+    if judge_path.exists():
+        import json as _json
+        rows = [_json.loads(l) for l in judge_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+        for pair, k in validation.three_way_agreement(rows).items():
+            print(f"{pair}: kappa={k['kappa']} ({k.get('strength')}), n={k['n']}")
+    return 0
+
+
+def cmd_judge(args) -> int:
+    """Run the independent LLM judge over a run, for the three-way kappa check."""
+    if not (RESULTS_DIR / f"{args.dataset}.jsonl").exists():
+        sys.exit(f"No results for {args.dataset}.")
+    model = args.analyst_model or args.perturbation_model
+    _require_key([model])
+    import json as _json
+    from stepwise.judge import judge_run
+    from stepwise.llm import LLMClient
+    client = LLMClient(use_cache=not args.no_cache)
+    rows = judge_run(args.dataset, client, model=model, limit=args.n_samples)
+    out = RESULTS_DIR / f"{args.dataset}.judge.jsonl"
+    out.write_text("\n".join(_json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    agree = sum(1 for r in rows if r.get("judge_label") == r.get("auto_label"))
+    print(f"\n{len(rows)} cells judged -> {out.name}. "
+          f"judge agreed with the automatic label on {agree}/{len(rows)}.")
+    print(f"Now: python main.py validate --dataset {args.dataset}")
+    return 0
+
+
 def cmd_demo(args) -> int:
     """Populate results offline, with no API key and no network."""
     # The demo pools every fixture family unless one was named explicitly.
@@ -394,6 +445,8 @@ def main(argv=None) -> int:
         "mech": cmd_mech,
         "mcp": cmd_mcp,
         "verify": cmd_verify,
+        "validate": cmd_validate,
+        "judge": cmd_judge,
         "demo": cmd_demo,
         "analyse": cmd_analyse,
         "analyze": cmd_analyse,

@@ -261,6 +261,13 @@ table.data tbody tr.selectable { cursor: pointer; }
 .question-box { background: var(--panel); padding: 18px; border-bottom: 1px solid var(--panel-rule); }
 .question-box p { margin: 9px 0 0; font-size: 15px; line-height: 1.55; color: var(--on-panel-2); white-space: pre-wrap; }
 .verdict { display: flex; align-items: center; gap: 14px; margin-top: 22px; flex-wrap: wrap; }
+.annotate { display: flex; align-items: center; gap: 8px; margin-top: 14px; flex-wrap: wrap;
+  padding-top: 14px; border-top: 1px solid var(--panel-rule); }
+.ann-btn { font: 500 11px/1 var(--mono); padding: 6px 11px; background: transparent;
+  color: var(--on-panel-2); border: 1px solid var(--panel-rule-2); cursor: pointer; }
+.ann-btn:hover { border-color: var(--c, var(--on-panel-3)); color: var(--on-panel); }
+.ann-btn[aria-pressed="true"] { background: var(--c); border-color: var(--c); color: oklch(0.16 0.02 258); font-weight: 700; }
+.ann-btn.clear { color: var(--on-panel-4); }
 
 /* --- analysis ------------------------------------------------------------ */
 .analysis { font-size: 15px; line-height: 1.66; color: var(--ink-2); max-width: 76ch; }
@@ -679,6 +686,8 @@ async function loadRun(name) {
   $("run-select").value = name;
   state.summary = await api("/api/summary", { run: name });
   if (state.summary.empty) return showNoRuns();
+  try { state.annotations = (await api("/api/annotations", { run: name })).labels || {}; }
+  catch { state.annotations = {}; }
   renderSimBanner();
   renderStats();
   renderFilters();
@@ -1101,9 +1110,50 @@ async function openExample(cell) {
     </div>
     <div class="verdict">
       ${data.label ? `<span class="pill" style="padding:8px 13px; font-size:10.5px; border:1px solid ${LABEL_COLOR[data.label]}; background:oklch(0.30 0.05 258 / .35); color:${LABEL_COLOR[data.label]}">
-        <i style="background:${LABEL_COLOR[data.label]}"></i>${esc(data.label)}</span>` : ""}
+        <i style="background:${LABEL_COLOR[data.label]}"></i>auto: ${esc(data.label)}</span>` : ""}
       <span class="note on-panel" style="margin:0;">${esc(verdictText(data))}</span>
+    </div>
+    <div class="annotate" id="annotate-box">
+      <span class="label on-panel">Your label</span>
+      ${["follows", "ignores", "corrects"].map((l) =>
+        `<button type="button" class="ann-btn" data-ann="${l}" style="--c:${LABEL_COLOR[l]}">${l}</button>`).join("")}
+      <button type="button" class="ann-btn clear" data-ann="">clear</button>
+      <span class="note on-panel" id="ann-status" style="margin-left:auto;"></span>
     </div>`;
+  wireAnnotate(cell);
+}
+
+function annKey(cell) {
+  return `${cell.question_id}|${cell.model}|${cell.step_idx}|${cell.perturbation_type}`;
+}
+
+function wireAnnotate(cell) {
+  const key = annKey(cell);
+  const current = (state.annotations || {})[key] || "";
+  const box = $("annotate-box");
+  if (!box) return;
+  box.querySelectorAll(".ann-btn").forEach((b) =>
+    b.setAttribute("aria-pressed", String(b.dataset.ann === current)));
+  box.querySelectorAll(".ann-btn").forEach((b) => b.addEventListener("click", async () => {
+    try {
+      const res = await fetch("/api/annotate", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ run: state.run, key, label: b.dataset.ann }),
+      });
+      const data = await res.json();
+      state.annotations = state.annotations || {};
+      if (b.dataset.ann) state.annotations[key] = b.dataset.ann;
+      else delete state.annotations[key];
+      box.querySelectorAll(".ann-btn").forEach((x) =>
+        x.setAttribute("aria-pressed", String(x.dataset.ann === b.dataset.ann && b.dataset.ann !== "")));
+      const k = data.agreement && data.agreement.kappa;
+      $("ann-status").textContent = data.count
+        ? `${data.count} labelled` + (k != null ? ` · κ vs auto = ${k}` : "")
+        : "";
+    } catch (err) {
+      $("ann-status").textContent = "save failed";
+    }
+  }));
 }
 
 function verdictText(data) {

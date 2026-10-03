@@ -285,3 +285,36 @@ def test_real_runs_are_listed_before_simulated_ones(client, make_client, tmp_pat
     assert [r["name"] for r in runs] == ["real", "demo"]
     assert runs[0]["simulated"] is False
     assert runs[1]["simulated"] is True
+
+
+# --------------------------------------------------------------------------
+# Human annotation endpoints (measurement validation)
+# --------------------------------------------------------------------------
+
+
+def test_annotation_save_and_reload(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(dashboard_app, "RESULTS_DIR", tmp_path)
+    # Grab a real cell key from the demo run.
+    recs = client.get("/api/records", params={"run": "demo", "limit": 1}).json()["rows"][0]
+    key = f"{recs['question_id']}|{recs['model_name']}|{recs['step_idx']}|{recs['perturbation_type']}"
+
+    save = client.post("/api/annotate", json={"run": "demo", "key": key, "label": "follows"})
+    assert save.status_code == 200 and save.json()["saved"] is True
+    assert save.json()["count"] == 1
+
+    got = client.get("/api/annotations", params={"run": "demo"}).json()
+    assert got["labels"][key] == "follows"
+    assert "kappa" in got["agreement"]
+
+
+def test_annotation_clear(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(dashboard_app, "RESULTS_DIR", tmp_path)
+    client.post("/api/annotate", json={"run": "demo", "key": "k|m|1|x", "label": "ignores"})
+    client.post("/api/annotate", json={"run": "demo", "key": "k|m|1|x", "label": ""})
+    assert client.get("/api/annotations", params={"run": "demo"}).json()["count"] == 0
+
+
+def test_a_bad_label_is_rejected(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(dashboard_app, "RESULTS_DIR", tmp_path)
+    r = client.post("/api/annotate", json={"run": "demo", "key": "k|m|1|x", "label": "banana"})
+    assert r.status_code == 400

@@ -409,6 +409,46 @@ def chat_reset(session_id: str = Body(..., embed=True)) -> dict:
     return {"reset": SESSIONS.reset(session_id)}
 
 
+# --------------------------------------------------------------------------
+# Human annotation (for the label-reliability check)
+# --------------------------------------------------------------------------
+
+
+def _annotation_store(run: str):
+    from ..validation import AnnotationStore
+
+    return AnnotationStore.load(RESULTS_DIR / f"{Path(run).name}.annotations.json")
+
+
+@app.get("/api/annotations")
+def annotations(run: str) -> dict:
+    """The human labels saved for a run, plus kappa against the automatic ones."""
+    from ..validation import validate_against_human
+
+    store = _annotation_store(run)
+    frame = _load(run)["frame"]
+    records = frame.to_dict(orient="records") if not frame.empty else []
+    agreement = validate_against_human(records, store) if store.labels else {}
+    return {"labels": store.labels, "count": len(store), "agreement": agreement}
+
+
+@app.post("/api/annotate")
+def annotate(run: str = Body(...), key: str = Body(...), label: str = Body(...)) -> dict:
+    """Save (or clear) one human label, then return the updated kappa."""
+    from ..validation import validate_against_human
+
+    store = _annotation_store(run)
+    try:
+        store.set(key, label)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    store.save()
+    frame = _load(run)["frame"]
+    records = frame.to_dict(orient="records") if not frame.empty else []
+    return {"saved": True, "count": len(store),
+            "agreement": validate_against_human(records, store) if store.labels else {}}
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {"ok": True, "results_dir": str(RESULTS_DIR)}
