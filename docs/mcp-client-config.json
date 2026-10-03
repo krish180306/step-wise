@@ -1,0 +1,11 @@
+{
+  "comment": "Point Claude Desktop (or Claude Code) at the Stepwise MCP server. Put this under 'mcpServers' in your client config, fixing the path to this repo.",
+  "mcpServers": {
+    "stepwise": {
+      "command": "python",
+      "args": ["-m", "stepwise.mcp_server"],
+      "cwd": "C:/Users/saikr/Desktop/projects/NLP",
+      "env": { "STEPWISE_RUN": "gsm8k" }
+    }
+  }
+}

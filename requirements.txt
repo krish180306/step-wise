@@ -1,11 +1,21 @@
 # Core
 groq>=0.11.0
 pandas>=2.0
+numpy>=1.24
 datasets>=2.18
 
-# Dashboard
-fastapi>=0.110
+# Dashboard (FastAPI 0.115 needs starlette <0.47; pinned so the optional
+# `mcp` extra, which pulls a newer starlette, cannot break the dashboard)
+fastapi>=0.110,<0.116
+starlette>=0.40,<0.47
 uvicorn>=0.27
+
+# Mechanistic track (local model on a GPU). Heavy; install only for `mech`.
+# torch>=2.1
+# transformers>=4.40
+
+# MCP server (expose results to a Claude client). Optional; uses stdio only.
+# mcp>=2.0
 
 # Optional: only needed to swap in another provider
 # openai>=1.30

@@ -27,7 +27,7 @@ from stepwise.config import (
 )
 from stepwise.llm import LLMClient, load_dotenv
 
-COMMANDS = ("run", "battery", "mech", "demo", "analyse", "analyze", "ask", "score", "dashboard", "models")
+COMMANDS = ("run", "battery", "mech", "mcp", "verify", "demo", "analyse", "analyze", "ask", "score", "dashboard", "models")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -233,6 +233,31 @@ def _mech_elicit(model, sample):
     return "\n".join(lines).strip(), answer
 
 
+def cmd_mcp(args) -> int:
+    """Run the Stepwise MCP server (stdio) so a Claude client can query runs."""
+    try:
+        from stepwise.mcp_server import main as mcp_main
+    except ImportError:
+        sys.exit("The MCP server needs the mcp package: pip install mcp")
+    mcp_main()
+    return 0
+
+
+def cmd_verify(args) -> int:
+    """Fact-check a saved analysis report against the run's real numbers."""
+    report_path = RESULTS_DIR / f"analysis_{args.dataset}.md"
+    records_path = Path(args.output) if args.output else RESULTS_DIR / f"{args.dataset}.jsonl"
+    if not report_path.exists():
+        sys.exit(f"No report at {report_path}. Run: python main.py analyse --dataset {args.dataset}")
+    if not records_path.exists():
+        sys.exit(f"No results at {records_path}.")
+    from stepwise.agent.verifier import verify_report, format_verification
+    from stepwise.pipeline import load_records
+    result = verify_report(report_path.read_text(encoding="utf-8"), load_records(records_path))
+    print(format_verification(result))
+    return 0
+
+
 def cmd_demo(args) -> int:
     """Populate results offline, with no API key and no network."""
     # The demo pools every fixture family unless one was named explicitly.
@@ -367,6 +392,8 @@ def main(argv=None) -> int:
         "run": cmd_run,
         "battery": cmd_battery,
         "mech": cmd_mech,
+        "mcp": cmd_mcp,
+        "verify": cmd_verify,
         "demo": cmd_demo,
         "analyse": cmd_analyse,
         "analyze": cmd_analyse,

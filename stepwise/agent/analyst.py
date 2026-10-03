@@ -116,6 +116,7 @@ class AnalysisReport:
     turns: int = 0
     duration_s: float = 0.0
     stopped_because: str = "finished"
+    verification: dict = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -343,7 +344,32 @@ def analyse_results(
             f"the analysis did not finish ({report.stopped_because}). "
             f"Nothing was written to {path.name}; the partial transcript is in {failed.name}."
         )
-    report.save(path)
+    # Adversarially check every number in the report against the data the
+    # agent was summarising. A clean report gains a provenance stamp; a flagged
+    # one keeps its flags visible rather than being silently trusted.
+    from .verifier import format_verification, verify_report
+
+    verification = verify_report(report.report, ctx.frame)
+    report.verification = verification
+    if progress:
+        progress("\n" + format_verification(verification))
+    stamped = report.report + _verification_footer(verification)
+    path.write_text(stamped, encoding="utf-8")
+    path.with_suffix(".json").write_text(
+        json.dumps({**report.to_dict(), "verification": verification}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     if progress:
         progress(f"\nAnalysis written to {path}")
     return report
+
+
+def _verification_footer(v: dict) -> str:
+    """A footer appended to the saved report recording the fact-check."""
+    lines = ["\n\n---\n\n## Verification",
+             f"An independent pass re-derived every number in this report from the "
+             f"records. {v['n_checked']} of {v['n_claims']} were checkable; "
+             f"**{v['n_unsupported']} unsupported**."]
+    for c in v["unsupported"]:
+        lines.append(f"- ⚠ `{c['kind']} {c['value']}` — {c['note']}")
+    return "\n".join(lines)
