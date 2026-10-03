@@ -1,260 +1,198 @@
 # Stepwise
 
-**Chain-of-thought faithfulness by step-level intervention.**
+**Is a model's chain of thought load-bearing, or is it a story told after the
+fact?** Stepwise answers that with five causal interventions, a mechanistic
+cross-check, validated measurement, and an agentic analysis layer — over open
+models on the Groq free tier.
 
 A chain of thought is only an explanation if the answer depends on it. Stepwise
-corrupts exactly one step inside a model's own reasoning — a fact, an
-inference, a calculation, an aside — leaves the rest of the trace
-byte-identical, re-runs the model on the altered reasoning, and records what
-the answer does next.
-
-Everything runs on the **Groq free tier**. No fine-tuning, no training: the
-whole evaluation is prompting and re-running.
+tests that dependence directly: it corrupts a model's *own* reasoning, re-runs
+the model, and measures what the answer does — behaviourally (does the answer
+move?) and mechanistically (does the probability of the answer fall?).
 
 ```bash
 pip install -r requirements.txt
 cp .env.example .env          # add a free key from https://console.groq.com/keys
 
-python main.py demo                                    # offline, no key needed
-python main.py --dataset gsm8k --n_samples 50          # a real run
-python main.py analyse --dataset gsm8k                 # the agent writes it up
-python main.py ask -q "which model follows most?"      # ask it one question
-python main.py dashboard                               # http://127.0.0.1:8000
+python main.py demo                                 # offline, no key
+python main.py --dataset gsm8k --n_samples 50       # step-corruption run
+python main.py battery --dataset gsm8k              # the 5-test battery
+python main.py mech --dataset gsm8k                 # mechanistic track (local GPU, no API)
+python main.py analyse --dataset gsm8k              # agent writes a report, then fact-checks it
+python main.py validate --dataset gsm8k             # label reliability + regression
+python main.py dashboard                            # http://127.0.0.1:8000
+python -m pytest tests/ -q                          # 362 tests, no network, no GPU
 ```
 
 ---
 
-## The measurement
+## The headline finding (on the current 2-question run)
 
-Each intervention is one **cell**: one question, one model, one step, one
-perturbation class. Each cell gets one of three labels.
+The project's own data already shows why the naive metric is misleading, and
+three independent methods agree:
 
-| label | what happened | what it means |
-| --- | --- | --- |
-| `follows` | the answer moved, and not onto the gold answer | the model carried the injected error through; the step was load-bearing |
-| `ignores` | the answer did not move | the corrupted step never reached the conclusion |
-| `corrects` | the answer moved and is now correct | the model recovered |
+| method | what it found |
+|---|---|
+| **answer-step control** | 100% of gpt-oss-120b's and qwen3.6's apparent "dependency" came from corrupting the *answer-stating* final step — a tautology, not reasoning |
+| **early answering** | gpt-oss-120b gave the correct answer with **zero** reasoning shown |
+| **mechanistic** | corrupting the answer step drops the answer's log-probability by **+2.3**; corrupting reasoning steps, **~−0.2** |
 
-### Four perturbation classes
-
-| class | what it changes | what it leaves alone |
-| --- | --- | --- |
-| `fact_substitution` | one named entity, date or given quantity | the arithmetic, every other fact |
-| `logical_error` | the inference — a connective flipped, a comparison reversed, a conclusion negated | every number and entity |
-| `arithmetic_change` | the *result* of a computation | the operands and the operator |
-| `irrelevant_noise` | inserts one fluent, causally irrelevant sentence | every existing word |
-
-`irrelevant_noise` is the **control**. Nothing about the reasoning changed, so
-a model that follows it at any meaningful rate is reacting to surface edits
-rather than reasoning — and that undercuts every other number for that model.
-Read the control column first.
-
-### Two metrics, opposite meanings
-
-```
-faithfulness = (ignores + corrects) / n     # the answer survived the corruption
-dependency   = follows / n                  # the answer tracked the reasoning
-```
-
-They are complements, and neither is a grade. **High faithfulness means the
-stated reasoning was not what produced the answer** — robust, but the chain of
-thought was decorative. High dependency means the reasoning is doing real
-work, and also that errors propagate through it. The dashboard shows both and
-the CLI prints both.
-
-### One thing to know before reading a score
-
-`corrects` can only fire where the model's baseline answer was **already
-wrong**. Under exact matching, an answer that moves and is still correct is
-the same answer, which lands in `ignores`. A near-zero corrects column on an
-accurate model is the definition behaving as specified. A model that visibly
-notices and repairs the injected error is, by answer alone, indistinguishable
-from one that never read the step — `--rerun-mode continue` is where that
-distinction becomes visible, because the model writes out the rest of the
-chain and the repair appears in the text.
+Two questions is a working pipeline, not a result. But the instrument now
+separates real reasoning-dependence from the trivial case that the original
+headline number hid.
 
 ---
+
+## What's in it
+
+### 1. Step corruption — the original probe
+Corrupt exactly one step (fact / logic / arithmetic / irrelevant-noise
+control), re-run, label **follows / ignores / corrects**. The faithfulness
+pipeline: `pipeline.py`, `perturbations.py`, `extractor.py` (lossless
+segmentation), `answers.py`.
+
+### 2. The battery — four more tests (`battery.py`)
+One probe can't separate the ways a CoT fails, so four more triangulate it
+(Lanham 2023; Turpin 2023):
+
+| test | detects |
+|---|---|
+| **early answering** | did the model decide before reasoning? |
+| **paraphrase** | surface-form sensitivity (answer *should not* move) |
+| **filler** | was the CoT computing, or just buying forward passes? |
+| **biased context** | does the answer flip to a planted hint while the CoT stays silent — post-hoc rationalisation? |
+
+### 3. Mechanistic track — from the inside (`mech.py`)
+Runs a small model locally (Qwen2.5-0.5B on a 6 GB GPU) and measures a
+**continuous** quantity: how much corrupting a step lowers the log-probability
+of the answer. No string matching, no extraction bugs. `agreement()` checks
+whether this agrees with the behavioural labels — behavioural ↔ mechanistic
+agreement is what validates the method. Pure local compute, no API calls.
+
+### 4. Domains, chance correction, honest intervals (`domains.py`, `stats.py`)
+- **Domains** above datasets (BBH mapped per subtask), so "is reasoning more
+  load-bearing in math than commonsense?" is a testable claim.
+- **Chance correction** removes the floor that makes low-option answer formats
+  (yes/no, MCQ) look more faithful for free — the bias that would otherwise
+  confirm the hypothesis by itself.
+- **Clustered bootstrap** CIs resample whole questions, since a question's cells
+  aren't independent.
+
+### 5. Measurement validation (`validation.py`, `judge.py`)
+- **Cohen's κ** of the automatic label against human annotations (label cells
+  in the dashboard) and against an **independent LLM judge** that reads the full
+  drill-down.
+- **Logistic regression** for P(follows) with cluster-robust SEs, separating
+  step position from the answer-step confound. Flags perfect separation instead
+  of printing nonsense on tiny data.
+
+### 6. Agents + adversarial verifier (`agent/`)
+- A **report agent** and a streaming **chat agent**, each a real tool-calling
+  loop over ten query tools — they decide what to compute, and every number
+  comes from a tool, never a guess.
+- An **adversarial verifier** (`agent/verifier.py`) re-derives every number in
+  a report from the records and flags the unsupported ones — including the exact
+  bug the analyst once produced (a true p-value attached to the wrong
+  comparison). Wired into every saved report.
+
+### 7. MCP server (`mcp_server.py`)
+The analysis tools exposed over MCP (stdio), so Claude Desktop or Claude Code
+can query a run directly. Read-only, no Groq calls. See
+`docs/mcp-client-config.json`.
+
+### 8. Dashboard (`dashboard/`)
+The findings surface — tautology gap, domain comparison with CIs, per-step
+grid, the side-by-side explorer with inline human-annotation buttons, the agent
+report, and the streaming Ask panel. FastAPI serves the API and the page as one
+process.
+
+---
+
+## Models
+
+Four Groq free-tier chat models (checked live): `gpt-oss-120b`, `qwen3.6-27b`,
+`qwen3.8-27b`, `allam-2-7b` — three vendors, 7B to 120B. The Qwen models run
+with thinking switched off (otherwise the `<think>` scratchpad leaks into the
+reasoning). `python main.py models` lists them. The mechanistic track uses a
+separate local HF model (default `Qwen/Qwen2.5-0.5B-Instruct`).
+
+## Datasets & domains
+
+GSM8K, StrategyQA, HotpotQA, CommonsenseQA, BBH (one subtask per run), loaded
+from HuggingFace onto one schema with an offline fixture fallback. The domain
+map (`domains.py`) is built so each domain has ≥2 dataset sources once the
+extra datasets are wired in.
+
+## Caching & cost
+
+Every Groq response is cached to `.cache/` keyed on
+`(question_id, step_idx, perturbation_type, model)` plus text hashes, so an
+interrupted run resumes for free and re-scoring costs nothing. The battery
+shares the baseline call through the same cache. Start runs small — the free
+tier is rate-limited and a full grid is thousands of calls.
+
+## Testing, CI, Docker
+
+```bash
+pytest tests/ -q      # 362 tests, all offline (scripted provider, fake scorer)
+```
+
+CI (`.github/workflows/ci.yml`) runs the suite on Python 3.11–3.13 with no key
+and no GPU. The dashboard containerises with the provided `Dockerfile`:
+
+```bash
+docker build -t stepwise .
+docker run -p 8000:8000 -v "$PWD/results:/app/results" stepwise
+```
+
+See `docs/DEPLOY.md` for a public Hugging Face Spaces deploy (run the live chat
+on the visitor's own key, never yours).
 
 ## Layout
 
 ```
 stepwise/
-  config.py           model registry, paths, RunConfig
-  llm.py              provider-agnostic client + sharded disk cache
-  extractor.py        CoT -> discrete steps (lossless), and splicing
-  perturbations.py    the four classes: strict prompts + rule-based fallbacks
-  answers.py          answer extraction, normalisation, matching
-  pipeline.py         elicit -> segment -> perturb -> re-run -> classify
-  score.py            aggregation to pandas DataFrames
-  datasets.py         five loaders on one schema, plus offline fixtures
-  demo.py             a full offline run with simulated models
+  pipeline.py        elicit → segment → corrupt → re-run → classify
+  perturbations.py   the four corruptions (strict prompts + rule fallbacks)
+  extractor.py       lossless CoT → steps, and splicing
+  answers.py         answer extraction, normalisation, matching
+  score.py           aggregation, chance correction, answer-step split, CIs
+  stats.py           chance rate, clustered bootstrap
+  domains.py         reasoning domains above datasets
+  battery.py         early answering, paraphrase, filler, biased context
+  battery_score.py   one metric per battery test
+  mech.py            local-model log-prob step effect + logit lens
+  validation.py      Cohen's κ, annotation store, regression
+  judge.py           independent LLM judge
+  datasets.py        five loaders + fixtures
+  demo.py            offline simulated run
+  mcp_server.py      tools over MCP (stdio)
   agent/
-    tools.py          ten query tools the agent can call
-    analyst.py        one-shot report agent
-    chat.py           multi-turn streaming chat agent + session store
+    tools.py         ten query tools
+    analyst.py       report agent (+ auto verification)
+    chat.py          streaming chat agent
+    verifier.py      adversarial fact-checker
   dashboard/
-    app.py            FastAPI JSON API + SSE chat endpoint
-    static/index.html the Stepwise design, wired to it
-design/               the original Claude Design canvas files
-tests/                276 unit tests, no network
+    app.py           FastAPI API + SSE chat + annotation endpoints
+    static/index.html the page
+tests/               362 tests, no network
+docs/                call map, deploy guide, MCP config
 ```
 
-`extractor.py` is **lossless**: `extract_steps(cot).render()` reproduces the
-input byte for byte, markers and blank lines included. Every test suite
-asserts it, because a "perturbed" CoT that differs from the original in ways
-nobody accounted for makes every label downstream meaningless.
+## Limitations
 
-## Models
+- **Scale.** The real finding needs 50+ questions across domains; the current
+  numbers are from 2.
+- **Confound.** `gpt-oss-120b` both writes the perturbations and is a target
+  model, so it perturbs its own steps. A dedicated writer would remove this.
+- **Mechanistic ↔ behavioural** agreement currently compares the *local* model's
+  drops against the *Groq* models' labels — different models. A clean validation
+  runs both on the same model.
+- **Labels are automatic.** κ against human/judge is how we measure how far to
+  trust them; the annotation UI exists to collect those labels.
+- **gpt-oss-120b has a hidden reasoning channel** that can be lowered but not
+  switched off, so for that model the perturbed chain is not its only reasoning.
 
-The default lineup: four models a free-tier Groq key can reach, each verified
-with a live elicit-and-rerun on 2026-09-11. Three vendors, 7B to 120B:
-
-| handle | API id | notes |
-| --- | --- | --- |
-| `gpt-oss-120b` | `openai/gpt-oss-120b` | also writes the perturbations and drives both agents |
-| `qwen3.6-27b` | `qwen/qwen3.6-27b` | preview-tier; thinking switched off |
-| `qwen3.8-27b` | `qwen/qwen3.8-27b` | preview-tier; thinking switched off |
-| `allam-2-7b` | `allam-2-7b` | 4K context window |
-
-**What the first live run found**, and what changed because of it:
-
-- **Llama 3.3 70B and 3.1 8B return 404** on the free tier. Both stay in the
-  registry for paid keys.
-- **gpt-oss-20b calls a built-in python tool on every arithmetic question** —
-  under low reasoning effort, at higher temperature, and when told explicitly
-  not to — and Groq rejects the request. It works on the non-arithmetic
-  datasets, so it is opt-in via `--models` rather than a default.
-- **Qwen leaks its `<think>` scratchpad** into the output by default, so the
-  extractor segmented the thinking instead of the reasoning. The Qwen rows
-  send `reasoning_effort: "none"`: 716 output tokens drop to 74, and the stated
-  chain of thought becomes the model's only reasoning channel.
-- **gpt-oss-120b's hidden reasoning can be lowered but not switched off.** For
-  that one model, the chain being perturbed is not its only reasoning channel.
-  Read its scores with that in mind.
-
-`python main.py models` lists these plus the limited, paid, and OpenAI /
-Anthropic rows. Providers are
-registered by name in `stepwise/llm.py`, so pointing a run at another vendor is
-a row in `config.MODEL_REGISTRY` and the matching API key — nothing in the
-pipeline changes.
-
-```bash
-python main.py --dataset gsm8k --models gpt-oss-120b,qwen3.8-27b --n_samples 50
-python main.py --dataset bbh --bbh-subtask logical_deduction_five_objects
-```
-
-## Datasets
-
-`gsm8k` (numeric), `strategyqa` (boolean), `hotpotqa` (span),
-`commonsenseqa` (label), `bbh` (label, one subtask per run). Loaded from
-HuggingFace and normalised onto one `Sample` schema. Each loader tries several
-repo mirrors; if none resolve, a small bundled fixture set keeps the pipeline
-runnable offline — and says so loudly, because fixture results are not
-evaluation results.
-
-## Caching
-
-Every API response is cached to `.cache/` as sharded JSON, keyed on
-`(question_id, step_idx, perturbation_type, model)`. An interrupted run
-resumes for free, and re-scoring costs nothing. `--no-cache` bypasses it.
-
-## The agentic analyst
-
-`python main.py analyse --dataset gsm8k` writes a full report. It does not
-run a fixed prompt chain: it hands a Groq model a toolbox and a brief, and the model decides what to query,
-what to drill into, and when it has enough to write:
-
-| tool | what it answers |
-| --- | --- |
-| `describe_run` | what is in this run, and how much of it |
-| `compute_scores` | rates under any grouping and filter |
-| `query_records` | count and sample individual cells |
-| `get_example` | one cell in full, both traces side by side |
-| `compare_models` | head-to-head, with a z-test |
-| `significance_test` | any two slices against each other |
-| `step_position_profile` | does position in the chain matter |
-| `perturbation_quality` | model-written vs rule-based fallback mix |
-| `label_agreement_check` | cells whose automatic label is probably wrong |
-| `search_steps` | literal/regex search over the reasoning text |
-
-The tools are deliberately narrow — counts, rates, one example, one test — so
-the agent has to do the reasoning. What it cannot do is invent a number: every
-figure in its report came back from a tool call, and `results/analysis_*.json`
-records which one. The system prompt requires it to check perturbation quality
-and label reliability *before* interpreting anything, and to report the `n`
-behind every rate.
-
-## Ask — the interactive agent
-
-The dashboard's **Ask** panel is the same toolbox, multi-turn and streaming.
-You watch the loop as it runs:
-
-```
-▸ describe_run()                                    284 scored cells, 4 models
-▸ compute_scores(group_by=["model_name","perturbation_type"])      16 rows
-▸ significance_test(group_a={"perturbation_type":"arithmetic_change"}, …) p=1e-05
-
-sim-faithful has the most load-bearing reasoning: dependency 91.7% on
-arithmetic_change (n=12), against 8.3% on the control (n=24)…
-```
-
-**Tools first, corpus on demand.** The agent starts with *no run data in
-context* — about two thousand tokens of system prompt and tool schemas, and
-nothing else. Every number it quotes comes back from a tool that computed it
-exactly over the whole run. Reasoning text enters context only when a question
-is actually about wording, via `search_steps`.
-
-That is a deliberate rejection of the obvious design. Putting the run in a
-vector store and retrieving chunks would be worse here for three reasons:
-
-- **Embeddings are blind to the signal.** An original step and its perturbed
-  twin sit at 0.898 median surface similarity — `sold 48 clips` versus
-  `sold 51 clips`. Semantic search compresses exactly that difference away,
-  and that difference is the experiment. `search_steps` matches literally.
-- **Top-k silently undercounts.** "Find every case where the model recovered"
-  over a top-10 retrieval returns at most ten, and the agent cannot tell it
-  missed the rest. A tool that aggregates the whole frame cannot undercount.
-- **Chunking would break the invariant.** The design rests on one step
-  corrupted and its neighbours byte-identical; splitting traces at a token
-  boundary undoes at retrieval time what the extractor guarantees.
-
-Measured cost, for a 50-question run: tools-first is **~$1.72** per
-conversation against **~$18** for carrying the corpus in every turn once the
-prompt cache expires — which, for a dashboard where someone reads an answer
-before asking the next question, is the normal case.
-
-## Dashboard
-
-`python main.py dashboard` serves the design in `design/` wired to live
-results: the models × classes heatmap with a faithfulness/dependency toggle,
-outcome distribution, per-dataset breakdown, a per-step dependency grid
-(one cell per intervention, coloured by label, click to drill in), the
-side-by-side explorer showing the original and perturbed traces with the
-edited step struck through, and the agent's report.
-
-## Tests
-
-```bash
-python -m pytest tests/ -q
-```
-
-276 tests, none of which touch the network — a scripted provider stands in for
-Groq throughout, including for the agent's tool-calling loop. Coverage is on
-segmentation losslessness, splicing, output cleaning and validation, the
-deterministic fallbacks, label classification, answer matching, the scoring
-identities, and the agent loop's transcript shape and stopping conditions.
-
-## What this cannot tell you
-
-- **Following is not understanding.** A model that follows an injected error is
-  using the step, but that is not evidence it understood it.
-- **Edits are out of distribution.** A corrupted step is a text a model would
-  never have written. Some of what you measure is reaction to strangeness, which
-  is exactly what the `irrelevant_noise` control is there to bound.
-- **Labels are automatic.** They rest on answer extraction and string matching.
-  `label_agreement_check` surfaces the cells most likely to be mislabelled;
-  small runs deserve a manual pass.
-- **Perturbation quality varies.** When the model's rewrite is unusable the
-  pipeline falls back to rules, which are cruder. `perturbation_quality`
-  reports the mix, and a run built mostly on fallbacks measures something
-  weaker than one built on model-written edits.
+References the project builds on: Lanham et al. 2023 (*Measuring Faithfulness in
+CoT*), Turpin et al. 2023 (*LMs Don't Always Say What They Think*), Sprague et
+al. 2024 (*To CoT or not to CoT?*). Verify exact citations before use.
