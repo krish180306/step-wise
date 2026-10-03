@@ -27,7 +27,7 @@ from stepwise.config import (
 )
 from stepwise.llm import LLMClient, load_dotenv
 
-COMMANDS = ("run", "battery", "demo", "analyse", "analyze", "ask", "score", "dashboard", "models")
+COMMANDS = ("run", "battery", "mech", "demo", "analyse", "analyze", "ask", "score", "dashboard", "models")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -62,6 +62,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="model that drives the agentic analysis (defaults to the perturbation model)")
     parser.add_argument("--tests", default="early_answering,paraphrase,filler,biased_context",
                         help="battery tests to run (comma-separated)")
+    parser.add_argument("--mech-model", default="Qwen/Qwen2.5-0.5B-Instruct",
+                        help="local HF model for the mechanistic track")
     parser.add_argument("--max-steps", type=int, default=8,
                         help="cap on steps perturbed per question")
     parser.add_argument("--rerun-mode", default="full", choices=("full", "continue"),
@@ -157,6 +159,78 @@ def cmd_battery(args) -> int:
     print(format_battery(records))
     print(f"\n{client.stats['api_calls']} API calls, {client.stats['hits']} cache hits.")
     return 0
+
+
+def cmd_mech(args) -> int:
+    """Mechanistic track: continuous log-prob step effects on a local model.
+
+    No API key, no Groq calls — this is pure local GPU compute, and it reuses
+    the rule-based perturbations so it costs nothing to run repeatedly. It
+    elicits each question's reasoning from the *local* model, then measures how
+    far corrupting each step lowers the answer's log-probability. If a run file
+    for this dataset exists, it also reports whether the mechanistic drop
+    agrees with the behavioural follows/ignores labels.
+    """
+    if args.dataset not in DATASETS:
+        sys.exit(f"Unknown dataset {args.dataset!r}. Choose one of: {', '.join(DATASETS)}")
+
+    import warnings as _w
+    _w.filterwarnings("ignore")
+    from stepwise.mech import LocalModel, step_effects, save_effects, agreement
+    from stepwise.datasets import load_samples
+    from stepwise.config import RESULTS_DIR
+    from stepwise.pipeline import load_records
+
+    print(f"Mechanistic track · {args.dataset} · loading {args.mech_model} (local, no API) ...")
+    model = LocalModel(args.mech_model)
+    print(f"  loaded on {model.device}, {model.n_layers} layers")
+    samples = load_samples(args.dataset, n=args.n_samples, seed=args.seed, subtask=args.bbh_subtask)
+
+    effects = []
+    for i, s in enumerate(samples, 1):
+        # The local model writes its own reasoning, so the measurement is about
+        # that model's own chain of thought, exactly as the behavioural run.
+        cot, ans = _mech_elicit(model, s)
+        if not ans:
+            print(f"  [{i}/{len(samples)}] {s.question_id}: no answer, skipped")
+            continue
+        effects += step_effects(model, s.question_id, args.mech_model, s.question, cot, ans,
+                                max_steps=args.max_steps, seed=args.seed)
+        print(f"  [{i}/{len(samples)}] {s.question_id}: {len(effects)} effects so far")
+
+    path = Path(args.output) if args.output else RESULTS_DIR / f"{args.dataset}.mech.jsonl"
+    save_effects(effects, path)
+    print(f"\n{len(effects)} step-effects written to {path}")
+
+    scored = [e for e in effects if not e.error and e.logprob_drop == e.logprob_drop]
+    if scored:
+        reasoning = [e.logprob_drop for e in scored if not e.is_answer_step]
+        answer_step = [e.logprob_drop for e in scored if e.is_answer_step]
+        _m = lambda xs: sum(xs) / len(xs) if xs else float("nan")
+        print(f"mean log-prob drop · reasoning steps: {_m(reasoning):+.3f}  "
+              f"answer step: {_m(answer_step):+.3f}")
+    beh_path = RESULTS_DIR / f"{args.dataset}.jsonl"
+    if beh_path.exists():
+        ag = agreement(effects, load_records(beh_path))
+        if ag["agrees"] is not None:
+            print(f"behavioural agreement · follows drop {ag['follows_mean_drop']} "
+                  f"(n={ag['follows_n']}) vs ignores drop {ag['ignores_mean_drop']} "
+                  f"(n={ag['ignores_n']}) -> {'AGREE' if ag['agrees'] else 'DISAGREE'}")
+    return 0
+
+
+def _mech_elicit(model, sample):
+    """Have the local model write its own CoT, parsed into (cot, answer)."""
+    from stepwise.answers import extract_answer
+    import re as _re
+
+    prompt = sample.prompt_question() + "\n\nReason in short numbered steps (Step 1:, Step 2:, ...), then a final line 'Answer: <answer>'."
+    text = model.generate(prompt) if hasattr(model, "generate") else ""
+    if not text:
+        return "", ""
+    answer = extract_answer(text, sample.answer_type, sample.choices, sample.question)
+    lines = [ln for ln in text.splitlines() if not _re.match(r"^\s*\**\s*(final\s+)?answer\b", ln, _re.I)]
+    return "\n".join(lines).strip(), answer
 
 
 def cmd_demo(args) -> int:
@@ -292,6 +366,7 @@ def main(argv=None) -> int:
     handlers = {
         "run": cmd_run,
         "battery": cmd_battery,
+        "mech": cmd_mech,
         "demo": cmd_demo,
         "analyse": cmd_analyse,
         "analyze": cmd_analyse,
