@@ -158,8 +158,11 @@ class _OpenAICompatibleProvider:
     name = "openai-compatible"
     env_var = "OPENAI_API_KEY"
 
-    def __init__(self, client: Any = None):
+    def __init__(self, client: Any = None, api_key: str | None = None):
         self._client = client
+        # An explicit key (e.g. a visitor's own, pasted into the dashboard)
+        # takes precedence over the environment, and is never written anywhere.
+        self._api_key = api_key
 
     def _make_client(self) -> Any:  # pragma: no cover - provider specific
         raise NotImplementedError
@@ -167,7 +170,7 @@ class _OpenAICompatibleProvider:
     @property
     def client(self) -> Any:
         if self._client is None:
-            if not api_key(self.name):
+            if not (self._api_key or api_key(self.name)):
                 raise LLMError(
                     f"{self.env_var} is not set. Export it, or put it in a .env file "
                     f"next to main.py."
@@ -246,7 +249,7 @@ class GroqProvider(_OpenAICompatibleProvider):
     def _make_client(self) -> Any:
         from groq import Groq
 
-        return Groq(api_key=api_key("groq"))
+        return Groq(api_key=self._api_key or api_key("groq"))
 
 
 class OpenAIProvider(_OpenAICompatibleProvider):
@@ -256,7 +259,7 @@ class OpenAIProvider(_OpenAICompatibleProvider):
     def _make_client(self) -> Any:
         from openai import OpenAI
 
-        return OpenAI(api_key=api_key("openai"))
+        return OpenAI(api_key=self._api_key or api_key("openai"))
 
 
 class AnthropicProvider:
@@ -265,17 +268,19 @@ class AnthropicProvider:
     name = "anthropic"
     env_var = "ANTHROPIC_API_KEY"
 
-    def __init__(self, client: Any = None):
+    def __init__(self, client: Any = None, api_key: str | None = None):
         self._client = client
+        self._api_key = api_key
 
     @property
     def client(self) -> Any:
         if self._client is None:
-            if not api_key("anthropic"):
+            key = self._api_key or api_key("anthropic")
+            if not key:
                 raise LLMError("ANTHROPIC_API_KEY is not set.")
             from anthropic import Anthropic
 
-            self._client = Anthropic(api_key=api_key("anthropic"))
+            self._client = Anthropic(api_key=key)
         return self._client
 
     def complete(
@@ -426,10 +431,14 @@ class LLMClient:
         cache: DiskCache | None = None,
         providers: dict[str, Provider] | None = None,
         use_cache: bool = True,
+        api_keys: dict[str, str] | None = None,
     ):
         self.cache = cache if cache is not None else DiskCache(enabled=use_cache)
         self._overrides = providers or {}
         self._instances: dict[str, Provider] = {}
+        # Per-provider keys supplied for this client only (bring-your-own-key).
+        # Never persisted; used in place of the environment when present.
+        self._api_keys = {k: v for k, v in (api_keys or {}).items() if v}
         self.calls = 0
 
     def provider_for(self, spec: ModelSpec) -> Provider:
@@ -442,7 +451,8 @@ class LLMClient:
                     f"unknown provider {spec.provider!r}; "
                     f"known providers: {sorted(PROVIDERS)}"
                 )
-            self._instances[spec.provider] = factory()
+            key = self._api_keys.get(spec.provider)
+            self._instances[spec.provider] = factory(api_key=key) if key else factory()
         return self._instances[spec.provider]
 
     def complete(

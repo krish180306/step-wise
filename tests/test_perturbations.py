@@ -376,3 +376,47 @@ def test_splicing_an_unchanged_perturbation_leaves_the_trace_intact():
     perturbation = apply_fallback("Hmm okay", LOGICAL_ERROR)
     assert not perturbation.changed
     assert splice_step(extracted, 1, extracted.step(1).text) == MARKED_COT
+
+
+# --------------------------------------------------------------------------
+# Severity ladder
+# --------------------------------------------------------------------------
+
+from stepwise.perturbations import apply_fallback as _af, SEVERITIES, DEFAULT_SEVERITY
+
+
+def _num(text):
+    import re
+    return [int(n) for n in re.findall(r"\d+", text)]
+
+
+def test_severity_scales_numeric_edit_magnitude():
+    step = "The total is 48 / 2 = 24 items."
+    # The edited result token differs more from 24 as severity rises.
+    deltas = {}
+    for sev in SEVERITIES:
+        out = _af(step, "arithmetic_change", severity=sev).text
+        # last number is the perturbed result
+        deltas[sev] = abs(_num(out)[-1] - 24)
+    assert deltas["minimal"] <= deltas["moderate"] < deltas["severe"]
+    assert deltas["severe"] >= 24  # an order-of-magnitude-ish error
+
+
+def test_moderate_is_unchanged_from_default():
+    step = "She earned 50 * 0.2 = 10 dollars."
+    assert _af(step, "arithmetic_change", severity="moderate").text == \
+           _af(step, "arithmetic_change").text
+
+
+def test_noise_amount_grows_with_severity():
+    step = "She babysat for 50 minutes."
+    lengths = {s: len(_af(step, "irrelevant_noise", severity=s).text) for s in SEVERITIES}
+    assert lengths["minimal"] < lengths["severe"]
+    assert lengths["severe"] > lengths["moderate"]
+
+
+def test_each_severity_actually_changes_the_step():
+    step = "The result is 7 widgets."
+    for sev in SEVERITIES:
+        p = _af(step, "arithmetic_change", severity=sev)
+        assert p.changed, f"{sev} did not change the step"

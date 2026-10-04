@@ -103,8 +103,14 @@ def _json_safe(value):
 @app.get("/api/runs")
 def list_runs() -> dict:
     """Every results file on disk: real runs first, newest first within each."""
+    # Sidecar files (<run>.battery.jsonl, .mech.jsonl, .judge.jsonl) also match
+    # *.jsonl but are not runs in their own right — exclude them so they do not
+    # appear as phantom runs in the picker.
+    SIDECARS = (".battery", ".mech", ".judge", ".patch", ".introspect", ".mech_behav")
     runs = []
     for path in sorted(RESULTS_DIR.glob("*.jsonl"), key=lambda p: -p.stat().st_mtime):
+        if any(path.stem.endswith(s) for s in SIDECARS):
+            continue
         sidecar = path.with_suffix(".traces.json")
         meta = {}
         if sidecar.exists():
@@ -347,6 +353,9 @@ def chat_status() -> dict:
     spec = resolve_model(model)
     return {
         "available": bool(api_key(spec.provider)),
+        # The server has no key, but the UI can still offer chat if the visitor
+        # pastes their own — the safe mode for a public deploy.
+        "accepts_byo_key": True,
         "model": spec.display,
         "provider": spec.provider,
         "requires": {
@@ -364,13 +373,22 @@ def chat(
     message: str = Body(...),
     session_id: str | None = Body(None),
     model: str | None = Body(None),
+    api_key: str | None = Body(None),
 ) -> StreamingResponse:
     """Answer a question about a run, streaming the agent's work as SSE.
 
     Each event is one line of ``data: {json}``. The agent decides its own
     tool calls; the client renders them as they arrive, which is what makes
     the loop legible rather than a spinner.
+
+    ``api_key`` is the bring-your-own-key path: if supplied it is used only for
+    this request's client and never persisted, so a public deploy can leave
+    chat on without spending the host's quota. If it is absent the server's own
+    environment key is used (the local-dashboard case).
     """
+    from ..config import resolve_model as _resolve
+    from ..llm import LLMClient as _LLMClient
+
     message = (message or "").strip()
     if not message:
         raise HTTPException(400, "message is empty")
@@ -381,7 +399,16 @@ def chat(
     if ctx.frame.empty:
         raise HTTPException(400, f"run {run!r} has no records to talk about")
 
-    session = SESSIONS.get_or_create(session_id, run, ctx, model or ANALYST_MODEL)
+    chosen = model or ANALYST_MODEL
+    spec = _resolve(chosen)
+    byo = (api_key or "").strip()
+    # A visitor's own key is used for this request only and never persisted. If
+    # none is given, the server's own environment key is used (local case); when
+    # neither exists, stream_reply raises and the client is told over the stream,
+    # and the UI already learns to offer a key box from /api/chat/status.
+    client = _LLMClient(api_keys={spec.provider: byo}) if byo else None
+
+    session = SESSIONS.get_or_create(session_id, run, ctx, chosen)
 
     def sse(payload: dict) -> str:
         """One SSE frame. The blank line after the data is what flushes it."""
@@ -389,7 +416,7 @@ def chat(
 
     def events():
         try:
-            for event in stream_reply(session, message):
+            for event in stream_reply(session, message, client=client):
                 yield sse(event)
         except LLMError as exc:
             yield sse({"type": "error", "message": str(exc)})
@@ -447,6 +474,104 @@ def annotate(run: str = Body(...), key: str = Body(...), label: str = Body(...))
     records = frame.to_dict(orient="records") if not frame.empty else []
     return {"saved": True, "count": len(store),
             "agreement": validate_against_human(records, store) if store.labels else {}}
+
+
+# --------------------------------------------------------------------------
+# The deeper analyses: battery, mechanistic, regression
+# --------------------------------------------------------------------------
+
+
+def _sidecar(run: str, suffix: str) -> Path:
+    return RESULTS_DIR / f"{Path(run).name}.{suffix}"
+
+
+@app.get("/api/battery")
+def battery(run: str) -> dict:
+    """The faithfulness battery summary for a run, if it has one."""
+    from ..battery_score import battery_summary
+
+    path = _sidecar(run, "battery.jsonl")
+    if not path.exists():
+        return {"available": False, "run": run}
+    rows = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    return {"available": True, **_json_safe(battery_summary(rows))}
+
+
+@app.get("/api/mech")
+def mech(run: str) -> dict:
+    """Mechanistic log-prob step effects: reasoning steps vs the answer step."""
+    path = _sidecar(run, "mech.jsonl")
+    if not path.exists():
+        return {"available": False, "run": run}
+    rows = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    scored = [r for r in rows if not r.get("error") and isinstance(r.get("logprob_drop"), (int, float))]
+    reasoning = [r["logprob_drop"] for r in scored if not r.get("is_answer_step")]
+    answer = [r["logprob_drop"] for r in scored if r.get("is_answer_step")]
+    mean = lambda xs: round(sum(xs) / len(xs), 4) if xs else None
+    # Per step index, for a small bar chart.
+    by_step: dict[int, list[float]] = {}
+    for r in scored:
+        by_step.setdefault(int(r["step_idx"]), []).append(r["logprob_drop"])
+    return {
+        "available": True, "model": rows[0].get("model_id") if rows else "",
+        "reasoning_mean_drop": mean(reasoning), "reasoning_n": len(reasoning),
+        "answer_mean_drop": mean(answer), "answer_n": len(answer),
+        "by_step": [{"step": k, "mean_drop": mean(v), "n": len(v)} for k, v in sorted(by_step.items())],
+    }
+
+
+@app.get("/api/regression")
+def regression(run: str) -> dict:
+    """Logistic regression for P(follows), separating the confounds."""
+    from ..validation import label_regression
+
+    frame = _load(run)["frame"]
+    if frame.empty:
+        return {"error": "no records"}
+    return _json_safe(label_regression(frame))
+
+
+@app.get("/api/patch")
+def patch(run: str) -> dict:
+    """Activation-patching causal-tracing curve, if the run has one."""
+    from ..mech import PatchResult, patch_curve
+
+    path = _sidecar(run, "patch.jsonl")
+    if not path.exists():
+        return {"available": False, "run": run}
+    rows = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    results = [PatchResult(**{k: v for k, v in r.items() if k in PatchResult.__dataclass_fields__})
+               for r in rows]
+    out = patch_curve(results)
+    return {"available": True, "model": rows[0].get("model_id") if rows else "", **_json_safe(out)}
+
+
+@app.get("/api/introspect")
+def introspect(run: str) -> dict:
+    """Self-knowledge probe summary: detection, false-alarm, fooled-and-blind."""
+    from ..introspect import introspect_summary
+
+    path = _sidecar(run, "introspect.jsonl")
+    if not path.exists():
+        return {"available": False, "run": run}
+    rows = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    return {"available": True, "per_model": _json_safe(introspect_summary(rows))}
+
+
+@app.get("/api/probe")
+def probe(run: str = "probe") -> dict:
+    """Faithfulness-probe scores: sensitivity vs control, against known
+    critical steps. Only meaningful for a probe run."""
+    from ..probe_score import probe_summary
+
+    path = RESULTS_DIR / (run if run.endswith(".jsonl") else f"{run}.jsonl")
+    if not path.exists():
+        return {"available": False, "run": run}
+    records = load_records(path)
+    summary = probe_summary(records)
+    if not summary["per_model"]:
+        return {"available": False, "run": run}
+    return {"available": True, **_json_safe(summary)}
 
 
 @app.get("/api/health")

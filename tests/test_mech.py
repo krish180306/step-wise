@@ -122,3 +122,114 @@ def test_save_effects_roundtrips(tmp_path):
     rows = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()]
     assert len(rows) == len(effects)
     assert rows[0]["question_id"] == "q1"
+
+
+# --------------------------------------------------------------------------
+# A2: same-model behavioural probe (local_behavioural)
+# --------------------------------------------------------------------------
+
+
+class FakeGenModel(FakeScorer):
+    """A scorer that also 'generates' a re-run answer, for local_behavioural.
+
+    ``rerun`` is a callable (cot -> answer); defaults to echoing the baseline so
+    every cell reads as ``ignores`` unless the test overrides it.
+    """
+
+    def __init__(self, *, rerun=None, **kw):
+        super().__init__(**kw)
+        self.rerun = rerun or (lambda cot: "72")
+        self.gen_calls = []
+
+    def generate(self, prompt, max_new_tokens=64):
+        self.gen_calls.append(prompt)
+        cot = prompt.split("Reasoning:\n", 1)[-1]
+        return f"Answer: {self.rerun(cot)}"
+
+
+def test_local_behavioural_labels_each_cell():
+    model = FakeGenModel()
+    rows = mech.local_behavioural(
+        model, "q1", "fake", "How many clips?", COT, "72",
+        gold_answer="72", answer_type="numeric", perturbation_types=("arithmetic_change",),
+    )
+    assert len(rows) == 3
+    # Baseline echoed -> all ignores; keys align with step_effects.
+    assert all(r["label"] == "ignores" for r in rows if not r["error"])
+    assert {r["step_idx"] for r in rows} == {1, 2, 3}
+
+
+def test_local_behavioural_follows_when_answer_moves():
+    # If the re-run returns a different number, that cell "follows".
+    model = FakeGenModel(rerun=lambda cot: "99")
+    rows = mech.local_behavioural(
+        model, "q1", "fake", "q", COT, "72",
+        gold_answer="72", answer_type="numeric", perturbation_types=("arithmetic_change",),
+    )
+    assert all(r["label"] == "follows" for r in rows if not r["error"])
+
+
+def test_same_model_agreement_is_within_one_model():
+    # The A2 point: build effects and behavioural from the SAME model, then
+    # agreement() compares them cell-for-cell.
+    model = FakeGenModel(rerun=lambda cot: "99" if "Step 2" in cot else "72")
+    effects = mech.step_effects(model, "q1", "fake", "q", COT, "72",
+                                perturbation_types=("arithmetic_change",))
+    beh = mech.local_behavioural(model, "q1", "fake", "q", COT, "72",
+                                 gold_answer="72", answer_type="numeric",
+                                 perturbation_types=("arithmetic_change",))
+    ag = mech.agreement(effects, beh, by_key=("question_id", "step_idx"))
+    assert ag["follows_n"] + ag["ignores_n"] >= 1
+
+
+# --------------------------------------------------------------------------
+# Activation patching (true causal tracing)
+# --------------------------------------------------------------------------
+
+
+class FakePatcher:
+    """Returns a per-layer restoration that rises at a chosen layer."""
+
+    def __init__(self, clean=-1.0, corrupted=-3.0, rise_at=2, n_layers=4):
+        self.clean, self.corrupted, self.rise_at, self.n = clean, corrupted, rise_at, n_layers
+
+    def patch_restore(self, clean_ctx, corrupted_ctx, answer):
+        restored = []
+        for L in range(self.n):
+            frac = 0.0 if L < self.rise_at else 1.0
+            restored.append(self.corrupted + frac * (self.clean - self.corrupted))
+        return {"clean": self.clean, "corrupted": self.corrupted, "restored": restored}
+
+
+def test_patch_effects_traces_each_changed_cell():
+    results = mech.patch_effects(FakePatcher(), "q1", "fake", "q", COT, "72",
+                                 perturbation_types=("arithmetic_change",))
+    scored = [r for r in results if not r.error]
+    assert scored
+    assert all(len(r.restored) == 4 for r in scored)
+
+
+def test_patch_curve_localises_restoration():
+    results = mech.patch_effects(FakePatcher(rise_at=2), "q1", "fake", "q", COT, "72",
+                                 perturbation_types=("arithmetic_change",))
+    curve = mech.patch_curve(results)
+    by_layer = {r["layer"]: r["restoration"] for r in curve["curve"]}
+    assert by_layer[0] == 0.0 and by_layer[3] == 1.0
+    assert curve["n_cells"] >= 1
+
+
+def test_patch_curve_skips_cells_with_no_effect():
+    # clean == corrupted -> denominator zero -> cell is not counted.
+    flat = mech.patch_effects(FakePatcher(clean=-1.0, corrupted=-1.0), "q1", "f", "q", COT, "72",
+                              perturbation_types=("arithmetic_change",))
+    assert mech.patch_curve(flat)["n_cells"] == 0
+
+
+def test_save_patch_effects_roundtrips(tmp_path):
+    import json
+    results = mech.patch_effects(FakePatcher(), "q1", "f", "q", COT, "72",
+                                 perturbation_types=("arithmetic_change",))
+    path = mech.save_patch_effects(results, tmp_path / "p.jsonl")
+    rows = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == len(results)
+    assert "restored" in rows[0]

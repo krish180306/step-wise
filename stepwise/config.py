@@ -154,7 +154,8 @@ PERTURBATION_TYPES = (
 
 LABELS = ("follows", "ignores", "corrects")
 
-DATASETS = ("gsm8k", "strategyqa", "hotpotqa", "commonsenseqa", "bbh")
+DATASETS = ("gsm8k", "svamp", "aqua", "strategyqa", "hotpotqa",
+            "2wikimultihop", "commonsenseqa", "bbh", "probe")
 
 
 @dataclass
@@ -163,6 +164,9 @@ class RunConfig:
     models: list[str] = field(default_factory=lambda: list(DEFAULT_TARGET_MODELS))
     n_samples: int = 50
     perturbation_types: list[str] = field(default_factory=lambda: list(PERTURBATION_TYPES))
+    #: Edit sizes to run per cell. The default is one ("moderate"), which keeps a
+    #: normal run the same size; the severity ladder passes several.
+    severities: list[str] = field(default_factory=lambda: ["moderate"])
     perturbation_model: str = PERTURBATION_MODEL
     max_steps_per_sample: int = 8
     seed: int = 0
@@ -173,6 +177,10 @@ class RunConfig:
     #: it leads to; "continue" truncates after the perturbed step and lets the
     #: model write the rest of the reasoning itself.
     rerun_mode: str = "full"
+    #: Use the dataset's own reference chain of thought instead of eliciting one
+    #: from each model. Required for the probe set, where every model must reason
+    #: over the same authored chain so the critical-step labels apply.
+    use_reference_cot: bool = False
     results_path: Path | None = None
 
     def resolved_results_path(self) -> Path:

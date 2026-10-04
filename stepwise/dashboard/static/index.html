@@ -119,7 +119,35 @@ select.run:hover { border-color: var(--accent); }
 /* Longhand only: the shorthand would reset .wrap's horizontal padding. */
 .hero { padding-top: clamp(40px, 5vw, 68px); padding-bottom: clamp(34px, 4vw, 52px); }
 .hero h1 { font-family: var(--serif); font-size: clamp(38px, 5.6vw, 72px); line-height: 0.96; letter-spacing: -0.022em; max-width: 17ch; margin-top: clamp(18px, 2.4vw, 28px); }
-.hero p { font-size: clamp(16px, 1.3vw, 19px); line-height: 1.6; color: var(--ink-2); max-width: 60ch; margin: clamp(20px, 2.4vw, 28px) 0 0; }
+/* Full-bleed hero: the neural-net canvas fills the entire section as a live
+   backdrop; the copy is overlaid on the left over a readability scrim so the
+   network shows through on the right. Stacks gracefully on narrow screens. */
+.hero-full { position: relative; overflow: hidden; display: flex; align-items: center;
+  min-height: clamp(560px, 82vh, 840px); background:
+  radial-gradient(130% 110% at 78% 30%, oklch(0.975 0.012 258 / 0.7), transparent 62%), var(--paper); }
+#scene { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
+#scene canvas { display: block; width: 100%; height: 100%; }
+/* Scrim: fade the page colour in from the left (and the bottom) so overlaid
+   copy stays legible while the net stays visible on the right. color-mix keeps
+   it tied to the --paper token. */
+.hero-scrim { position: absolute; inset: 0; z-index: 1; pointer-events: none; background:
+  linear-gradient(90deg, var(--paper) 0%,
+    color-mix(in oklch, var(--paper), transparent 22%) 24%,
+    color-mix(in oklch, var(--paper), transparent 62%) 46%,
+    color-mix(in oklch, var(--paper), transparent 100%) 66%),
+  linear-gradient(0deg, var(--paper) 0%, transparent 22%); }
+.hero-overlay { position: relative; z-index: 2; width: 100%; }
+.hero-overlay .hero-text { min-width: 0; max-width: 34rem; }
+.scene-caption { font: 500 12px/1.4 var(--mono); letter-spacing: 0.02em; color: var(--ink-3);
+  min-height: 1.6em; margin: clamp(22px, 2.6vw, 32px) 0 0; transition: color .3s ease; }
+@media (max-width: 760px) {
+  .hero-full { min-height: 0; padding-top: 18px; padding-bottom: 10px; }
+  .hero-scrim { background: linear-gradient(0deg, var(--paper) 4%,
+    color-mix(in oklch, var(--paper), transparent 26%) 48%,
+    color-mix(in oklch, var(--paper), transparent 42%) 100%); }
+  .hero-overlay .hero-text { max-width: none; }
+}
+.hero p { font-size: clamp(16px, 1.3vw, 19px); line-height: 1.6; color: var(--ink-2); max-width: 44ch; margin: clamp(20px, 2.4vw, 28px) 0 0; }
 dl.stats {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 132px), 1fr));
   gap: 1px; background: var(--rule); border: 1px solid var(--rule);
@@ -381,6 +409,7 @@ table.data tbody tr.selectable { cursor: pointer; }
       <a href="#heatmap">Heatmap</a>
       <a href="#datasets">Datasets</a>
       <a href="#findings">Findings</a>
+      <a href="#methods">Methods</a>
       <a href="#grid">Grid</a>
       <a href="#explorer">Explorer</a>
       <a href="#ask">Ask</a>
@@ -394,12 +423,17 @@ table.data tbody tr.selectable { cursor: pointer; }
 </header>
 
 <!-- ===================== 01 · coverage ===================== -->
-<section id="top">
-  <div class="wrap hero">
-    <div class="eyebrow"><span class="dot"></span>Chain-of-thought faithfulness · step-level intervention</div>
-    <h1 class="display">Does the reasoning do any work?</h1>
-    <p>One step of each model's own chain of thought is corrupted, the rest of the trace left byte-identical, and the model re-run on the altered reasoning. What the answer does next is the measurement.</p>
-    <dl class="stats" id="stats"></dl>
+<section id="top" class="hero-full">
+  <div id="scene" role="img" aria-label="A neural network: a signal propagates layer by layer from input to output. Periodically one unit is corrupted — on a reasoning unit the signal fades and the output holds (ignores); on the output unit it reaches the answer and flips it (follows)."></div>
+  <div class="hero-scrim"></div>
+  <div class="wrap hero hero-overlay">
+    <div class="hero-text">
+      <div class="eyebrow"><span class="dot"></span>Chain-of-thought faithfulness · step-level intervention</div>
+      <h1 class="display">Does the reasoning do any work?</h1>
+      <p>One step of each model's own chain of thought is corrupted, the rest of the trace left byte-identical, and the model re-run on the altered reasoning. What the answer does next is the measurement.</p>
+      <dl class="stats" id="stats"></dl>
+      <div id="scene-caption" class="scene-caption" aria-live="polite"></div>
+    </div>
   </div>
 </section>
 
@@ -490,6 +524,82 @@ table.data tbody tr.selectable { cursor: pointer; }
         <p class="note" id="domain-note" style="margin-top:14px;"></p>
       </div>
 
+      <div id="probe-block">
+        <h3 style="font-size:19px; margin-bottom:6px;">Probe set — measured against known critical steps</h3>
+        <p class="note" style="margin-bottom:16px;">Everywhere else "load-bearing" is inferred. The probe set is hand-authored with the critical step <em>known</em>, so a corruption has a correct outcome: breaking the critical step <em>should</em> move a faithful model's answer; the irrelevant-noise control should not. <b>Sensitivity</b> is how often the answer moved when the key step broke; <b>control</b> how often it moved on a meaningless edit; <b>discrimination</b> (sensitivity − control) is the one number that says how much the stated reasoning is really doing.</p>
+        <div class="table-scroll"><table class="data" id="probe-table"></table></div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ===================== 03c · deeper analyses ===================== -->
+<section class="panel-2" id="methods">
+  <div class="wrap">
+    <div class="section-head">
+      <div>
+        <div class="label on-panel" style="margin-bottom:14px;">03c — Beyond one probe</div>
+        <h2 style="color:var(--on-panel);">Triangulation.</h2>
+      </div>
+    </div>
+    <div class="section-body" style="display:grid; gap:36px;">
+
+      <div id="battery-block">
+        <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">The battery — four more tests</h3>
+        <p class="note on-panel" style="margin-bottom:16px;">Each isolates a different failure mode. Early answering: did the model decide before reasoning? Paraphrase: does a reword move the answer (it shouldn't)? Filler: does accuracy survive replacing the reasoning with "…"? Biased context: does the answer flip to a planted hint while the chain stays silent?</p>
+        <div class="table-scroll"><table class="data on-panel" id="battery-table"></table></div>
+      </div>
+
+      <div id="mech-block">
+        <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">Mechanistic — from the inside</h3>
+        <p class="note on-panel" style="margin-bottom:16px;">A continuous measure on a local model: how far corrupting a step lowers the log-probability of the answer. No string matching. If it agrees with the behavioural labels, the method is validated.</p>
+        <div id="mech-chart"></div>
+      </div>
+
+      <div id="regression-block">
+        <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">Regression — separating the confounds</h3>
+        <p class="note on-panel" style="margin-bottom:16px;">Logistic model for the odds of "follows", with standard errors clustered by question. It asks whether step position still predicts following once the answer-step flag is in the model.</p>
+        <div class="table-scroll"><table class="data on-panel" id="regression-table"></table></div>
+        <p class="note on-panel" id="regression-note" style="margin-top:12px;"></p>
+      </div>
+
+      <div id="writer-block">
+        <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">Who wrote the corruption — the de-confound</h3>
+        <p class="note on-panel" style="margin-bottom:16px;">A model editing its own reasoning is a confound. Each cell is marked by whether the writer was the model under test ("self") or an independent model. If dependency is higher under "self", the headline was inflated — the "independent" row is the trustworthy number. Pass <code>--writer-model</code> with a model not under test to remove it entirely.</p>
+        <div class="table-scroll"><table class="data on-panel" id="writer-table"></table></div>
+      </div>
+
+      <div id="transfer-block">
+        <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">Cross-model transfer — is brittleness shared?</h3>
+        <p class="note on-panel" style="margin-bottom:16px;">For each pair of models, over the cells they share: how often they land on the same label, and the overlap of the cells each <em>follows</em>. High overlap means some steps are brittle for everyone (a property of the question); low overlap means unfaithfulness is model-specific.</p>
+        <div class="table-scroll"><table class="data on-panel" id="transfer-table"></table></div>
+      </div>
+
+      <div id="patch-block">
+        <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">Activation patching — true causal tracing</h3>
+        <p class="note on-panel" style="margin-bottom:16px;">The log-prob drop is correlational. This is causal: patch the clean residual stream back into the corrupted run, one layer at a time, and measure how much of the answer is restored. The layer where restoration rises is where the corrupted step's effect is carried.</p>
+        <div id="patch-chart"></div>
+      </div>
+
+      <div id="introspect-block">
+        <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">Self-knowledge — does the model notice?</h3>
+        <p class="note on-panel" style="margin-bottom:16px;">Shown a chain with one step silently corrupted, does the model flag a mistake? <b>Detection</b> is the flag rate on real errors; <b>false alarm</b> the rate on the control (nothing wrong); <b>fooled &amp; blind</b> is the worst case — it followed the error into its answer and did not notice.</p>
+        <div class="table-scroll"><table class="data on-panel" id="introspect-table"></table></div>
+      </div>
+
+      <div id="severity-block">
+        <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">Severity ladder — dose-response</h3>
+        <p class="note on-panel" style="margin-bottom:16px;">The same cell corrupted by a near-miss, a clear error, and an order-of-magnitude error. A faithful model follows more as the <em>consequential</em> error grows, while the <em>control</em> (more and more irrelevant noise) stays flat and low. A control line that climbs with the amount of noise is surface-reactivity, not reasoning.</p>
+        <div id="severity-chart"></div>
+      </div>
+
+      <div id="capability-block">
+        <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">Capability vs faithfulness</h3>
+        <p class="note on-panel" style="margin-bottom:16px;">Each model's baseline accuracy against how much its answer actually tracks the written reasoning (reasoning-only, chance-corrected dependency). Does a more capable model reason more faithfully, or is capability unrelated to faithfulness? With few models the correlation is indicative, not conclusive.</p>
+        <div id="capability-chart"></div>
+      </div>
+
     </div>
   </div>
 </section>
@@ -556,6 +666,13 @@ table.data tbody tr.selectable { cursor: pointer; }
 
     <div class="chat-shell">
       <div class="chat-log" id="chat-log"></div>
+      <div class="chat-input" id="chat-key-row" style="display:none; border-bottom:1px solid var(--panel-rule);">
+        <input id="chat-key" type="password" autocomplete="off" spellcheck="false"
+               placeholder="Paste your Groq API key (used only for your request, never stored)"
+               aria-label="Your API key"
+               style="flex:1; min-width:220px; background:var(--panel); border:1px solid var(--panel-rule-2); color:var(--on-panel); font:400 13px var(--mono); padding:10px 12px; border-radius:2px;" />
+        <span class="label on-panel" style="align-self:center;">bring your own key</span>
+      </div>
       <div class="chat-input">
         <textarea id="chat-box" rows="1" placeholder="Which model's reasoning is most load-bearing?" aria-label="Ask a question about this run"></textarea>
         <button class="btn" id="chat-send">Ask</button>
@@ -691,6 +808,8 @@ async function loadRun(name) {
   renderSimBanner();
   renderStats();
   renderFilters();
+  window.__stepwiseSummary = state.summary;  // for the 3D scene, which may load later
+  if (window.stepwiseScene) window.stepwiseScene.setFinding(state.summary);
   await refresh();
   loadAnalysis();
   chat.sessionId = null;
@@ -705,6 +824,16 @@ async function refresh() {
   renderBreakdown();
   renderTautology();
   renderDomainChart();
+  renderBattery();
+  renderMech();
+  renderRegression();
+  renderWriter();
+  renderTransfer();
+  renderPatch();
+  renderIntrospect();
+  renderProbe();
+  renderSeverity();
+  renderCapability();
   await Promise.all([renderDepGrid(), renderRecords()]);
 }
 
@@ -887,6 +1016,250 @@ function renderBreakdown() {
   if (state.dataset !== "all") rows = rows.filter((r) => r.dataset === state.dataset);
   if (state.type !== "all") rows = rows.filter((r) => r.perturbation_type === state.type);
   $("breakdown-table").innerHTML = scoreTable(rows, ["model_name", "dataset", "perturbation_type"]);
+}
+
+/* ===========================================================================
+   Deeper analyses: battery, mechanistic, regression
+   =========================================================================== */
+async function renderBattery() {
+  let data;
+  try { data = await api("/api/battery", { run: state.run }); } catch { data = { available: false }; }
+  const host = $("battery-block");
+  if (!data.available || !(data.per_model || []).length) {
+    $("battery-table").innerHTML = `<tbody><tr><td class="empty-state on-panel">No battery run yet. <code>python main.py battery --dataset ${esc(state.run)}</code></td></tr></tbody>`;
+    return;
+  }
+  const rows = data.per_model;
+  $("battery-table").innerHTML =
+    `<thead><tr><th>model</th><th>early · already knew</th><th>paraphrase · robust</th>` +
+    `<th>filler · accuracy</th><th>bias · flipped</th><th>bias · silent</th></tr></thead><tbody>` +
+    rows.map((r) => `<tr><td>${esc(r.model_name)}</td>` +
+      `<td class="num">${pct(r.early_already_knew)}</td>` +
+      `<td class="num">${pct(r.paraphrase_robustness)}</td>` +
+      `<td class="num">${pct(r.filler_accuracy)}${r.filler_baseline_accuracy != null ? ` <span style="opacity:.5">/ ${pct(r.filler_baseline_accuracy)}</span>` : ""}</td>` +
+      `<td class="num" style="color:${(r.bias_flip_rate || 0) > 0.3 ? "var(--follows)" : "inherit"}">${pct(r.bias_flip_rate)}</td>` +
+      `<td class="num" style="color:${(r.bias_silent_rate || 0) > 0.5 ? "var(--follows)" : "inherit"}">${pct(r.bias_silent_rate)}</td></tr>`).join("") +
+    `</tbody>`;
+}
+
+async function renderMech() {
+  let d;
+  try { d = await api("/api/mech", { run: state.run }); } catch { d = { available: false }; }
+  const host = $("mech-chart");
+  if (!d.available) {
+    host.innerHTML = `<p class="empty-state on-panel">No mechanistic run yet. <code>python main.py mech --dataset ${esc(state.run)}</code> (local GPU, no API).</p>`;
+    return;
+  }
+  // Two big numbers plus a per-step bar chart of mean log-prob drop.
+  const steps = d.by_step || [];
+  const maxAbs = Math.max(0.01, ...steps.map((s) => Math.abs(s.mean_drop || 0)));
+  const W = 560, barH = 26, padL = 72, padR = 60, padT = 6;
+  const Hc = padT + steps.length * (barH + 6);
+  const zero = padL + (W - padL - padR) * 0.08;
+  const scale = (W - padL - padR - (zero - padL)) / maxAbs;
+  const bars = steps.map((s, i) => {
+    const y = padT + i * (barH + 6);
+    const w = (s.mean_drop || 0) * scale;
+    const isAns = i === steps.length - 1;
+    const col = isAns ? "var(--follows)" : "var(--accent)";
+    return `<text x="4" y="${y + barH / 2}" dominant-baseline="middle" class="dom-label">step ${s.step}${isAns ? " (ans)" : ""}</text>` +
+      `<rect x="${w >= 0 ? zero : zero + w}" y="${y}" width="${Math.abs(w)}" height="${barH - 6}" fill="${col}" opacity="0.85"/>` +
+      `<text x="${zero + Math.max(w, 0) + 6}" y="${y + barH / 2}" dominant-baseline="middle" class="dom-val">${(s.mean_drop >= 0 ? "+" : "")}${(s.mean_drop || 0).toFixed(2)}</text>`;
+  }).join("");
+  host.innerHTML =
+    `<div style="display:flex; gap:28px; flex-wrap:wrap; margin-bottom:16px; font-family:var(--mono);">
+       <div><div class="label on-panel">reasoning steps · mean drop</div><div style="font:400 28px var(--serif); color:var(--on-panel);">${d.reasoning_mean_drop >= 0 ? "+" : ""}${d.reasoning_mean_drop ?? "—"}</div><div class="label on-panel">n=${d.reasoning_n}</div></div>
+       <div><div class="label on-panel">answer step · mean drop</div><div style="font:400 28px var(--serif); color:var(--follows);">${d.answer_mean_drop >= 0 ? "+" : ""}${d.answer_mean_drop ?? "—"}</div><div class="label on-panel">n=${d.answer_n}</div></div>
+       <div style="align-self:center;"><div class="label on-panel">model</div><div class="mono" style="font-size:12px; color:var(--on-panel-2);">${esc(d.model)}</div></div>
+     </div>` +
+    `<svg viewBox="0 0 ${W} ${Hc + 6}" style="max-width:100%; height:auto;" role="img" aria-label="Mean log-probability drop per step"><line x1="${zero}" x2="${zero}" y1="${padT}" y2="${Hc}" class="dom-tick"/>${bars}</svg>` +
+    `<p class="note on-panel" style="margin-top:10px;">A larger drop means corrupting that step hurt the answer's probability more — the answer step (purple) dwarfs the reasoning steps, the tautology seen from inside the model.</p>`;
+}
+
+async function renderRegression() {
+  let d;
+  try { d = await api("/api/regression", { run: state.run }); } catch { d = { error: "unavailable" }; }
+  const host = $("regression-table");
+  if (d.error) {
+    host.innerHTML = `<tbody><tr><td class="empty-state on-panel">${esc(d.error)}</td></tr></tbody>`;
+    $("regression-note").textContent = "";
+    return;
+  }
+  host.innerHTML =
+    `<thead><tr><th>term</th><th>odds ratio</th><th>p</th></tr></thead><tbody>` +
+    d.terms.map((t) => {
+      const sig = t.p_value < 0.05;
+      const or = t.odds_ratio == null ? "<span style='opacity:.5'>separated</span>"
+        : `${t.odds_ratio.toFixed(3)}${t.odds_ratio > 1 ? " ↑" : t.odds_ratio < 1 ? " ↓" : ""}`;
+      return `<tr><td class="mono" style="font-size:12px;">${esc(t.term)}</td>` +
+        `<td class="num">${or}</td><td class="num" style="color:${sig ? "var(--follows)" : "inherit"}">${t.p_value.toFixed(4)}${sig ? " *" : ""}</td></tr>`;
+    }).join("") + `</tbody>`;
+  $("regression-note").innerHTML = (d.warning ? `⚠ ${esc(d.warning)} ` : "") +
+    `Pseudo-R² ${d.pseudo_r2} · ${d.n} cells, ${d.n_questions} questions. Odds ratio above 1 raises the chance of following.`;
+}
+
+function renderWriter() {
+  const rows = (state.summary.writer_effect || []);
+  const host = $("writer-table");
+  if (!rows.length) { host.innerHTML = `<tbody><tr><td class="empty-state on-panel">No writer split — run with mixed writer/target, or an older run.</td></tr></tbody>`; return; }
+  // Group by model so self vs independent sit side by side.
+  const byModel = {};
+  rows.forEach((r) => { (byModel[r.model_name] = byModel[r.model_name] || {})[r.writer] = r; });
+  host.innerHTML =
+    `<thead><tr><th>model</th><th>writer</th><th>dependency (reasoning only)</th><th>n</th></tr></thead><tbody>` +
+    Object.entries(byModel).map(([m, ws]) => {
+      const order = ["self", "independent"].filter((w) => ws[w]);
+      return order.map((w, i) => {
+        const r = ws[w];
+        const flag = (w === "self" && ws.independent && r.dependency > (ws.independent.dependency + 0.1));
+        return `<tr><td>${i === 0 ? esc(m) : ""}</td>` +
+          `<td class="mono" style="font-size:12px;">${w}</td>` +
+          `<td class="num" style="color:${flag ? "var(--follows)" : "inherit"}">${pct(r.dependency)}${flag ? " ⚠" : ""}</td>` +
+          `<td class="num">${r.n}</td></tr>`;
+      }).join("");
+    }).join("") + `</tbody>`;
+}
+
+function renderTransfer() {
+  const rows = (state.summary.cross_model || []);
+  const host = $("transfer-table");
+  if (!rows.length) { host.innerHTML = `<tbody><tr><td class="empty-state on-panel">Needs at least two models in the run.</td></tr></tbody>`; return; }
+  host.innerHTML =
+    `<thead><tr><th>model A</th><th>model B</th><th>label agreement</th><th>follows overlap (Jaccard)</th><th>n shared</th></tr></thead><tbody>` +
+    rows.map((r) => `<tr><td>${esc(r.model_a)}</td><td>${esc(r.model_b)}</td>` +
+      `<td class="num">${pct(r.label_agreement)}</td>` +
+      `<td class="num">${r.follows_jaccard == null ? "—" : pct(r.follows_jaccard)}</td>` +
+      `<td class="num">${r.n_shared}</td></tr>`).join("") + `</tbody>`;
+}
+
+async function renderPatch() {
+  let d;
+  try { d = await api("/api/patch", { run: state.run }); } catch { d = { available: false }; }
+  const host = $("patch-chart");
+  if (!d.available || !(d.curve || []).length) {
+    host.innerHTML = `<p class="empty-state on-panel">No patching run yet. <code>python main.py mech --dataset ${esc(state.run)} --patch</code> (local GPU).</p>`;
+    return;
+  }
+  const curve = d.curve;
+  const W = 600, H = 190, padL = 40, padR = 16, padT = 12, padB = 30;
+  const n = curve.length;
+  const x = (i) => padL + (W - padL - padR) * (n <= 1 ? 0.5 : i / (n - 1));
+  const y = (v) => padT + (H - padT - padB) * (1 - Math.max(0, Math.min(1, v)));
+  const pts = curve.map((c, i) => `${x(i)},${y(c.restoration)}`).join(" ");
+  const dots = curve.map((c, i) => `<circle cx="${x(i)}" cy="${y(c.restoration)}" r="3" fill="var(--accent-up)"/>`).join("");
+  const xlabels = curve.filter((_, i) => n <= 10 || i % Math.ceil(n / 10) === 0)
+    .map((c) => `<text x="${x(curve.indexOf(c))}" y="${H - 8}" text-anchor="middle" class="dom-label">${c.layer}</text>`).join("");
+  host.innerHTML =
+    `<svg viewBox="0 0 ${W} ${H}" style="max-width:100%; height:auto;" role="img" aria-label="Restoration fraction by layer">` +
+    `<line x1="${padL}" x2="${W - padR}" y1="${y(0)}" y2="${y(0)}" class="dom-tick"/>` +
+    `<line x1="${padL}" x2="${W - padR}" y1="${y(1)}" y2="${y(1)}" class="dom-tick" opacity="0.4"/>` +
+    `<text x="4" y="${y(1) + 4}" class="dom-label">1.0</text><text x="4" y="${y(0) + 4}" class="dom-label">0.0</text>` +
+    `<polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2"/>${dots}${xlabels}` +
+    `<text x="${(padL + W - padR) / 2}" y="${H}" text-anchor="middle" class="dom-label">layer →</text></svg>` +
+    `<p class="note on-panel" style="margin-top:8px;">${d.n_cells} cells traced on ${esc(d.model)}. Restoration climbs toward 1.0 at the layer that carries the corrupted step's effect.</p>`;
+}
+
+async function renderIntrospect() {
+  let d;
+  try { d = await api("/api/introspect", { run: state.run }); } catch { d = { available: false }; }
+  const host = $("introspect-table");
+  if (!d.available || !(d.per_model || []).length) {
+    host.innerHTML = `<tbody><tr><td class="empty-state on-panel">No introspection run yet. <code>python main.py introspect --dataset ${esc(state.run)}</code></td></tr></tbody>`;
+    return;
+  }
+  host.innerHTML =
+    `<thead><tr><th>model</th><th>detection</th><th>false alarm</th><th>fooled &amp; blind</th><th>n</th></tr></thead><tbody>` +
+    d.per_model.map((r) => `<tr><td>${esc(r.model_name)}</td>` +
+      `<td class="num">${r.detection_rate == null ? "—" : pct(r.detection_rate)}</td>` +
+      `<td class="num" style="color:${(r.false_alarm_rate || 0) > 0.4 ? "var(--follows)" : "inherit"}">${r.false_alarm_rate == null ? "—" : pct(r.false_alarm_rate)}</td>` +
+      `<td class="num" style="color:${(r.fooled_and_blind || 0) > 0.5 ? "var(--follows)" : "inherit"}">${r.fooled_and_blind == null ? "—" : pct(r.fooled_and_blind)}</td>` +
+      `<td class="num">${r.n}</td></tr>`).join("") + `</tbody>`;
+}
+
+function renderSeverity() {
+  const host = $("severity-chart");
+  if (!host) return;
+  const rows = (state.summary.severity_curve || []);
+  const order = { minimal: 0, moderate: 1, severe: 2 };
+  const sevs = [...new Set(rows.map((r) => r.severity))].sort((a, b) => (order[a] ?? 1) - (order[b] ?? 1));
+  if (!rows.length || sevs.length < 2) {
+    host.innerHTML = `<p class="empty-state on-panel">Needs more than one edit size. <code>python main.py --dataset ${esc(state.run)} --severities minimal,moderate,severe</code></p>`;
+    return;
+  }
+  const models = [...new Set(rows.map((r) => r.model_name))].sort();
+  const byKey = Object.fromEntries(rows.map((r) => [`${r.model_name}|${r.severity}`, r]));
+  const W = 640, H = 70 + models.length * 150, padL = 48, padR = 16, padT = 10;
+  const colW = (W - padL - padR);
+  const x = (i) => padL + colW * (sevs.length <= 1 ? 0.5 : i / (sevs.length - 1));
+  const parts = [];
+  models.forEach((m, mi) => {
+    const y0 = padT + mi * 150;
+    const plotH = 100;
+    const y = (v) => y0 + 20 + plotH * (1 - Math.max(0, Math.min(1, v || 0)));
+    parts.push(`<text x="4" y="${y0 + 12}" class="dom-label" style="font-weight:600">${esc(m)}</text>`);
+    [["consequential_follow", "var(--follows)", "consequential"], ["control_follow", "var(--ignores,#c99a3a)", "control"]].forEach(([key, col, lbl]) => {
+      const pts = sevs.map((s, i) => { const r = byKey[`${m}|${s}`]; return r && r[key] != null ? `${x(i)},${y(r[key])}` : null; }).filter(Boolean);
+      if (pts.length) parts.push(`<polyline points="${pts.join(" ")}" fill="none" stroke="${col}" stroke-width="2"/>`);
+      sevs.forEach((s, i) => { const r = byKey[`${m}|${s}`]; if (r && r[key] != null) parts.push(`<circle cx="${x(i)}" cy="${y(r[key])}" r="3" fill="${col}"/>`); });
+    });
+    parts.push(`<line x1="${padL}" x2="${W - padR}" y1="${y0 + 120}" y2="${y0 + 120}" class="dom-tick"/>`);
+    sevs.forEach((s, i) => parts.push(`<text x="${x(i)}" y="${y0 + 134}" text-anchor="middle" class="dom-label">${esc(s)}</text>`));
+  });
+  host.innerHTML =
+    `<div style="display:flex; gap:18px; margin-bottom:8px; font:500 11px var(--mono);">` +
+    `<span style="color:var(--follows)">● consequential</span><span style="color:var(--ignores,#c99a3a)">● control (noise)</span></div>` +
+    `<svg viewBox="0 0 ${W} ${H}" style="max-width:100%; height:auto;" role="img" aria-label="Follow rate by severity">${parts.join("")}</svg>`;
+}
+
+function renderCapability() {
+  const host = $("capability-chart");
+  if (!host) return;
+  const cap = state.summary.capability || {};
+  const rows = (cap.per_model || []).filter((r) => r.accuracy != null && r.dependency_corrected != null);
+  if (rows.length < 2) {
+    host.innerHTML = `<p class="empty-state on-panel">Needs at least two models with a baseline accuracy.</p>`;
+    return;
+  }
+  const W = 520, H = 320, padL = 54, padR = 24, padT = 16, padB = 46;
+  const x = (v) => padL + (W - padL - padR) * v;              // accuracy 0..1
+  const y = (v) => padT + (H - padT - padB) * (1 - v);        // dependency 0..1
+  const grid = [0, 0.25, 0.5, 0.75, 1].map((t) =>
+    `<line x1="${x(t)}" x2="${x(t)}" y1="${padT}" y2="${H - padB}" class="dom-tick" opacity="0.3"/>` +
+    `<line x1="${padL}" x2="${W - padR}" y1="${y(t)}" y2="${y(t)}" class="dom-tick" opacity="0.3"/>` +
+    `<text x="${x(t)}" y="${H - padB + 16}" text-anchor="middle" class="dom-label">${(t * 100) | 0}%</text>` +
+    `<text x="${padL - 8}" y="${y(t) + 4}" text-anchor="end" class="dom-label">${(t * 100) | 0}%</text>`).join("");
+  const dots = rows.map((r) =>
+    `<circle cx="${x(r.accuracy)}" cy="${y(r.dependency_corrected)}" r="5" fill="var(--accent-up)"/>` +
+    `<text x="${x(r.accuracy) + 8}" y="${y(r.dependency_corrected) + 4}" class="dom-label">${esc(r.model_name)}</text>`).join("");
+  host.innerHTML =
+    `<svg viewBox="0 0 ${W} ${H}" style="max-width:100%; height:auto;" role="img" aria-label="Accuracy vs dependency">${grid}${dots}` +
+    `<text x="${(padL + W - padR) / 2}" y="${H - 6}" text-anchor="middle" class="dom-label">baseline accuracy →</text>` +
+    `<text x="14" y="${(padT + H - padB) / 2}" text-anchor="middle" transform="rotate(-90 14 ${(padT + H - padB) / 2})" class="dom-label">reasoning dependency →</text></svg>` +
+    `<p class="note on-panel" style="margin-top:8px;">${cap.correlation == null ? "Too few models for a correlation." : `Pearson r = <b>${cap.correlation}</b> across ${cap.n_models} models — ${cap.correlation > 0.3 ? "more capable models lean on their stated reasoning more" : cap.correlation < -0.3 ? "more capable models lean on it less" : "capability and faithfulness look unrelated here"}. Indicative at this n.`}</p>`;
+}
+
+async function renderProbe() {
+  const block = $("probe-block");
+  if (!block) return;
+  let d;
+  try { d = await api("/api/probe", { run: "probe" }); } catch { d = { available: false }; }
+  if (!d.available || !(d.per_model || []).length) {
+    $("probe-table").innerHTML = `<tbody><tr><td class="empty-state">No probe run yet. <code>python main.py --dataset probe</code> — a hand-authored set with known load-bearing steps, so this becomes a real sensitivity/control measure.</td></tr></tbody>`;
+    return;
+  }
+  $("probe-table").innerHTML =
+    `<thead><tr><th>model</th><th>sensitivity<br><span style="font-weight:400;opacity:.6">critical step → moved</span></th>` +
+    `<th>control follow<br><span style="font-weight:400;opacity:.6">noise → moved</span></th>` +
+    `<th>redundant follow</th><th>discrimination<br><span style="font-weight:400;opacity:.6">sens − control</span></th></tr></thead><tbody>` +
+    d.per_model.map((r) => {
+      const disc = r.discrimination;
+      const col = disc == null ? "inherit" : disc > 0.4 ? "var(--accent)" : disc < 0.15 ? "var(--follows)" : "inherit";
+      return `<tr><td>${esc(r.model_name)}</td>` +
+        `<td class="num">${r.sensitivity == null ? "—" : pct(r.sensitivity)} <span style="opacity:.5">n=${r.sensitivity_n}</span></td>` +
+        `<td class="num" style="color:${(r.control_follow || 0) > 0.3 ? "var(--follows)" : "inherit"}">${r.control_follow == null ? "—" : pct(r.control_follow)}</td>` +
+        `<td class="num">${r.redundant_follow == null ? "—" : pct(r.redundant_follow)}</td>` +
+        `<td class="num" style="color:${col}; font-weight:600;">${disc == null ? "—" : pct(disc)}</td></tr>`;
+    }).join("") + `</tbody>`;
 }
 
 /* ===========================================================================
@@ -1184,17 +1557,28 @@ async function initChat() {
   } catch {
     return;
   }
-  chat.available = status.available;
+  // The server may have no key but still accept a visitor's own (the safe
+  // mode for a public deploy): offer a key box and let chat run on it.
+  chat.byo = !status.available && status.accepts_byo_key;
+  chat.available = status.available || chat.byo;
   $("chat-meta").textContent = status.available
     ? `${status.model} · tools-first`
-    : `unavailable — set ${status.requires}`;
+    : chat.byo ? `${status.model} · bring your own ${status.requires}` : `unavailable — set ${status.requires}`;
 
   $("chat-suggestions").innerHTML = SUGGESTIONS
     .map((s) => `<button type="button">${esc(s)}</button>`).join("");
   $("chat-suggestions").querySelectorAll("button").forEach((b) =>
     b.addEventListener("click", () => { $("chat-box").value = b.textContent; sendChat(); }));
 
-  if (!status.available) {
+  if (chat.byo) {
+    $("chat-key-row").style.display = "flex";
+    if (!$("chat-log").children.length) {
+      $("chat-log").innerHTML = `<div class="empty-state on-panel">
+        This deployment runs no server key. Paste your own <code>${esc(status.requires)}</code>
+        above to use the agent — it is used only for your request and never stored.<br><br>
+        Everything else on this page works without any key.</div>`;
+    }
+  } else if (!status.available) {
     $("chat-log").innerHTML = `<div class="empty-state on-panel">
       The agent needs <code>${esc(status.requires)}</code> to run.<br><br>
       Everything else on this page works without it — the numbers are computed locally.</div>`;
@@ -1219,6 +1603,8 @@ async function sendChat() {
   const box = $("chat-box");
   const message = box.value.trim();
   if (!message || chat.busy || !chat.available) return;
+  const byoKey = ($("chat-key") && $("chat-key").value.trim()) || "";
+  if (chat.byo && !byoKey) { $("chat-key").focus(); return; }
 
   const log = $("chat-log");
   if (log.querySelector(".empty-state")) log.innerHTML = "";
@@ -1236,7 +1622,8 @@ async function sendChat() {
     const response = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ run: state.run, message, session_id: chat.sessionId }),
+      body: JSON.stringify({ run: state.run, message, session_id: chat.sessionId,
+                             ...(byoKey ? { api_key: byoKey } : {}) }),
     });
     if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
 
@@ -1431,5 +1818,10 @@ $("next-page").addEventListener("click", () => {
 
 boot();
 </script>
+
+<!-- 3D hero: loaded after the app so the page is usable even if the CDN is
+     slow or blocked; the scene is progressive enhancement, never required. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="/static/scene.js" defer></script>
 </body>
 </html>

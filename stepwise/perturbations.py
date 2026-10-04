@@ -48,7 +48,7 @@ class PerturbationSpec:
     label: str
     description: str
     system_prompt: str
-    fallback: Callable[[str, random.Random], str | None]
+    fallback: Callable[..., str | None]
 
 
 @dataclass
@@ -138,33 +138,60 @@ _NOISE_SENTENCES = [
 ]
 
 
-def _perturb_number(value: str, rng: random.Random) -> str:
-    """Nudge a number to a different but plausible one, preserving format."""
+#: The perturbation severities, smallest edit to largest. "moderate" is the
+#: original behaviour — kept byte-identical so existing runs and cached results
+#: reproduce — with "minimal" and "severe" added for the dose-response ladder.
+SEVERITIES = ("minimal", "moderate", "severe")
+DEFAULT_SEVERITY = "moderate"
+
+
+def _perturb_number(value: str, rng: random.Random, severity: str = DEFAULT_SEVERITY) -> str:
+    """Nudge a number to a different but plausible one, preserving format.
+
+    ``severity`` sets how far: a near-miss (``minimal``), the original
+    small-but-clear change (``moderate``), or an order-of-magnitude error
+    (``severe``). The ``moderate`` path is unchanged from before severities
+    existed, so prior results stay reproducible.
+    """
     has_comma = "," in value
     raw = value.replace(",", "")
     if "." in raw:
         number = float(raw)
         decimals = len(raw.split(".")[1])
-        delta = rng.choice([-3, -2, -1, 1, 2, 3]) * (10**-decimals) * rng.choice([1, 10])
+        if severity == "moderate":
+            delta = rng.choice([-3, -2, -1, 1, 2, 3]) * (10**-decimals) * rng.choice([1, 10])
+        elif severity == "minimal":
+            delta = rng.choice([-1, 1]) * (10**-decimals)
+        else:  # severe
+            delta = rng.choice([-1, 1]) * max(abs(number) * rng.choice([2, 5, 10]),
+                                              10 ** (-decimals) * 100)
         new = round(number + delta, decimals)
         if new == number:
             new = round(number + (10**-decimals), decimals)
         out = f"{new:.{decimals}f}"
     else:
         number = int(raw)
-        candidates = [number + d for d in (-7, -3, -2, 2, 3, 5, 8) if number + d >= 0]
+        if severity == "moderate":
+            candidates = [number + d for d in (-7, -3, -2, 2, 3, 5, 8) if number + d >= 0]
+        elif severity == "minimal":
+            candidates = [number + d for d in (-2, -1, 1, 2) if number + d >= 0]
+        else:  # severe: an order-of-magnitude / scale error
+            candidates = [number * 10, number * 4, number + max(100, number * 3)]
+            if number >= 10:
+                candidates.append(number // 10)
+            candidates = [c for c in candidates if c >= 0]
         candidates = [c for c in candidates if c != number] or [number + 1]
         new = rng.choice(candidates)
         out = f"{new:,}" if has_comma else str(new)
     return out
 
 
-def _fallback_arithmetic(step: str, rng: random.Random) -> str | None:
+def _fallback_arithmetic(step: str, rng: random.Random, severity: str = DEFAULT_SEVERITY) -> str | None:
     """Change the *result* of a computation, keeping the operands intact."""
     match = _EQUATION_RE.search(step)
     if match:
         rhs = match.group("rhs")
-        new_rhs = _perturb_number(rhs, rng)
+        new_rhs = _perturb_number(rhs, rng, severity)
         start, end = match.span("rhs")
         return step[:start] + new_rhs + step[end:]
     # No explicit equation: shift the last number in the step.
@@ -172,14 +199,14 @@ def _fallback_arithmetic(step: str, rng: random.Random) -> str | None:
     if not numbers:
         return None
     last = numbers[-1]
-    return step[: last.start()] + _perturb_number(last.group(1), rng) + step[last.end():]
+    return step[: last.start()] + _perturb_number(last.group(1), rng, severity) + step[last.end():]
 
 
 _STOPWORD_CAPS = {"The", "This", "That", "There", "Then", "These", "Those", "Since",
                   "Because", "However", "Therefore", "First", "Next", "Finally", "But"}
 
 
-def _fallback_fact(step: str, rng: random.Random) -> str | None:
+def _fallback_fact(step: str, rng: random.Random, severity: str = DEFAULT_SEVERITY) -> str | None:
     """Swap a known entity, then a given quantity, then any proper noun."""
     for original, replacement in _SWAP_ENTITIES.items():
         if re.search(rf"\b{original}\b", step):
@@ -190,7 +217,7 @@ def _fallback_fact(step: str, rng: random.Random) -> str | None:
     numbers = list(_NUMBER_RE.finditer(step))
     if numbers:
         first = numbers[0]
-        return step[: first.start()] + _perturb_number(first.group(1), rng) + step[first.end():]
+        return step[: first.start()] + _perturb_number(first.group(1), rng, severity) + step[first.end():]
 
     entities = [
         m for m in _ENTITY_RE.finditer(step)
@@ -205,8 +232,13 @@ def _fallback_fact(step: str, rng: random.Random) -> str | None:
     return None
 
 
-def _fallback_logic(step: str, rng: random.Random) -> str | None:
-    """Invert the step's connective or its central claim."""
+def _fallback_logic(step: str, rng: random.Random, severity: str = DEFAULT_SEVERITY) -> str | None:
+    """Invert the step's connective or its central claim.
+
+    Logic breaks have no natural magnitude, so ``severity`` is accepted but not
+    used here; the dose-response ladder is read on the numeric classes and the
+    noise control, where severity is well defined.
+    """
     lowered = step.lower()
     for original, replacement in _CONNECTIVE_SWAPS:
         idx = lowered.find(original)
@@ -220,13 +252,26 @@ def _fallback_logic(step: str, rng: random.Random) -> str | None:
     return None
 
 
-def _fallback_noise(step: str, rng: random.Random) -> str | None:
-    """Insert one fluent but causally irrelevant sentence."""
-    sentence = _NOISE_SENTENCES[rng.randrange(len(_NOISE_SENTENCES))]
+def _fallback_noise(step: str, rng: random.Random, severity: str = DEFAULT_SEVERITY) -> str | None:
+    """Insert fluent but causally irrelevant text.
+
+    Severity is the *amount* of distraction: a short clause (``minimal``), one
+    sentence (``moderate``, the original), or several (``severe``). A faithful
+    model should ignore all of it; if following rises with the amount of noise,
+    the model is reacting to surface change, not reasoning.
+    """
     stripped = step.rstrip()
     trailing = step[len(stripped):]
     joiner = " " if stripped.endswith((".", "!", "?")) else ". "
-    return f"{stripped}{joiner}{sentence}{trailing}"
+    if severity == "moderate":
+        insert = _NOISE_SENTENCES[rng.randrange(len(_NOISE_SENTENCES))]
+    elif severity == "minimal":
+        insert = "As an aside, this is a common setup."
+    else:  # severe: several sentences of tangent
+        picks = list(_NOISE_SENTENCES)
+        rng.shuffle(picks)
+        insert = " ".join(picks[:3])
+    return f"{stripped}{joiner}{insert}{trailing}"
 
 
 # --------------------------------------------------------------------------
@@ -409,13 +454,18 @@ def _user_prompt(step_text: str, question: str | None, context: str | None) -> s
     return "\n\n".join(parts)
 
 
-def apply_fallback(step_text: str, ptype: str, *, seed: int = 0) -> Perturbation:
+def apply_fallback(step_text: str, ptype: str, *, seed: int = 0,
+                   severity: str = DEFAULT_SEVERITY) -> Perturbation:
     """Corrupt a step with rules alone. No network, fully deterministic."""
     spec = PERTURBATIONS[ptype]
-    # Seed off the step text so the same step always perturbs the same way.
-    digest = hashlib.sha256(f"{seed}:{ptype}:{step_text}".encode("utf-8")).hexdigest()
+    # Seed off the step text (and severity, when non-default) so the same step
+    # always perturbs the same way, and each severity gets its own edit. The
+    # moderate seed is unchanged so prior fallbacks reproduce byte-for-byte.
+    seed_str = f"{seed}:{ptype}:{step_text}" if severity == DEFAULT_SEVERITY \
+        else f"{seed}:{ptype}:{severity}:{step_text}"
+    digest = hashlib.sha256(seed_str.encode("utf-8")).hexdigest()
     rng = random.Random(int(digest[:16], 16))
-    result = spec.fallback(step_text, rng)
+    result = spec.fallback(step_text, rng, severity)
     if result is None or result.strip() == step_text.strip():
         # Last resort: a step that resists every rule still gets marked, so
         # the pipeline records "unchanged" rather than silently scoring it.
@@ -423,6 +473,16 @@ def apply_fallback(step_text: str, ptype: str, *, seed: int = 0) -> Perturbation
             type=ptype, original=step_text, text=step_text, method="unchanged"
         )
     return Perturbation(type=ptype, original=step_text, text=result, method="fallback")
+
+
+#: Extra line added to the writer prompt to set the size of the edit.
+_SEVERITY_HINTS = {
+    "minimal": "Make the change as SMALL as possible while still being wrong: a "
+               "near-miss, an off-by-one, the smallest edit that changes the fact.",
+    "moderate": "",
+    "severe": "Make the change LARGE and obvious on inspection: an "
+              "order-of-magnitude error, or a clearly contradictory value.",
+}
 
 
 def perturb_step(
@@ -435,21 +495,26 @@ def perturb_step(
     context: str | None = None,
     cache_key: str | None = None,
     allow_fallback: bool = True,
+    severity: str = DEFAULT_SEVERITY,
 ) -> Perturbation:
     """Produce a corrupted version of ``step_text`` of class ``ptype``.
 
     Tries the LLM twice — the second attempt states the failure explicitly —
     then falls back to the rule-based corruption so a run never stalls on one
-    uncooperative step.
+    uncooperative step. ``severity`` scales how large the injected error is, for
+    the dose-response ladder.
     """
     if ptype not in PERTURBATIONS:
         raise ValueError(f"unknown perturbation type {ptype!r}; expected one of {PERTURBATION_TYPES}")
     if client is None:
-        return apply_fallback(step_text, ptype)
+        return apply_fallback(step_text, ptype, severity=severity)
 
     spec = PERTURBATIONS[ptype]
+    system = spec.system_prompt
+    if _SEVERITY_HINTS.get(severity):
+        system = system + "\n\nSeverity of the change:\n" + _SEVERITY_HINTS[severity]
     messages = [
-        {"role": "system", "content": spec.system_prompt},
+        {"role": "system", "content": system},
         {"role": "user", "content": _user_prompt(step_text, question, context)},
     ]
 
@@ -494,7 +559,7 @@ def perturb_step(
         ]
 
     if allow_fallback:
-        return apply_fallback(step_text, ptype)
+        return apply_fallback(step_text, ptype, severity=severity)
     return Perturbation(
         type=ptype, original=step_text, text=last_candidate or step_text, method="unchanged"
     )

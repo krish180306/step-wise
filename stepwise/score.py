@@ -25,6 +25,7 @@ not reasoning, it is pattern-matching on surface change.
 
 from __future__ import annotations
 
+from itertools import combinations
 from pathlib import Path
 
 import pandas as pd
@@ -88,6 +89,12 @@ def records_dataframe(records) -> pd.DataFrame:
         frame["domain"] = [domain_for(d, s) for d, s in zip(frame["dataset"], subtasks)]
     if "n_choices" not in frame:
         frame["n_choices"] = 0
+    if "self_perturbed" not in frame:
+        # Older runs predate the writer/target split; treat them as unknown,
+        # which ``writer_effect`` reads as "not independently verified".
+        frame["self_perturbed"] = False
+    if "severity" not in frame:
+        frame["severity"] = "moderate"
     return frame
 
 
@@ -223,6 +230,166 @@ def by_model(records) -> pd.DataFrame:
     return _aggregate(frame, ["model_name"]) if not frame.empty else pd.DataFrame()
 
 
+def writer_effect(records, *, reasoning_steps_only: bool = True) -> pd.DataFrame:
+    """Dependency split by who wrote the perturbation (A3 de-confound).
+
+    Each row is one model under one writer condition: ``self_perturbed=True``
+    means the model edited its own reasoning, ``False`` means an independent
+    writer did. If a model's measured dependency is much higher when it
+    perturbs itself, the self-perturbation confound was inflating the headline
+    — the ``False`` row is the trustworthy number. Reasoning steps only by
+    default, so the answer-step tautology does not swamp the comparison.
+    """
+    frame = records if isinstance(records, pd.DataFrame) else records_dataframe(records)
+    if frame.empty or "self_perturbed" not in frame:
+        return pd.DataFrame()
+    out = _aggregate(frame, ["model_name", "self_perturbed"],
+                     reasoning_steps_only=reasoning_steps_only)
+    if not out.empty:
+        out["writer"] = out["self_perturbed"].map({True: "self", False: "independent"})
+    return out
+
+
+def cross_model_transfer(records, *, reasoning_steps_only: bool = True) -> pd.DataFrame:
+    """Does a corruption that moves one model's answer move another's?
+
+    For every pair of models, over the cells they share
+    ``(question_id, step_idx, perturbation_type)``, report how often they land
+    on the same label, and — the transfer question — the Jaccard overlap of the
+    cells each *follows* plus P(B follows | A follows). High overlap means
+    unfaithfulness is a property of the cell (some steps are brittle for
+    everyone); low overlap means it is model-specific. Note the cells are the
+    same coordinates but, on a normal run, each model's own reasoning text, so
+    this is transfer of *where* the chain breaks, not of the identical edit.
+    """
+    frame = records if isinstance(records, pd.DataFrame) else records_dataframe(records)
+    if frame.empty or "model_name" not in frame:
+        return pd.DataFrame()
+    scored = frame[frame["scored"]] if "scored" in frame else frame
+    if reasoning_steps_only and "is_answer_step" in scored:
+        scored = scored[~scored["is_answer_step"]]
+    if scored.empty or scored["model_name"].nunique() < 2:
+        return pd.DataFrame()
+    scored = scored.copy()
+    scored["cell"] = (
+        scored["question_id"].astype(str) + "|" + scored["step_idx"].astype(str)
+        + "|" + scored["perturbation_type"].astype(str)
+    )
+    pivot = scored.pivot_table(
+        index="cell", columns="model_name", values="label", aggfunc="first"
+    )
+    rows = []
+    for a, b in combinations(sorted(pivot.columns), 2):
+        sub = pivot[[a, b]].dropna()
+        n = len(sub)
+        if n == 0:
+            continue
+        agree = round(float((sub[a] == sub[b]).mean()), 4)
+        fa, fb = sub[a] == FOLLOWS, sub[b] == FOLLOWS
+        union = int((fa | fb).sum())
+        jaccard = round(int((fa & fb).sum()) / union, 4) if union else None
+        cond = round(float(fb[fa].mean()), 4) if int(fa.sum()) else None
+        rows.append({
+            "model_a": a, "model_b": b, "n_shared": n,
+            "label_agreement": agree, "follows_jaccard": jaccard,
+            "p_b_follows_given_a": cond,
+            "a_follows_n": int(fa.sum()), "b_follows_n": int(fb.sum()),
+        })
+    return pd.DataFrame(rows)
+
+
+_SEVERITY_ORDER = {"minimal": 0, "moderate": 1, "severe": 2}
+_CONTROL_TYPE = "irrelevant_noise"
+
+
+def severity_curve(records, *, reasoning_steps_only: bool = True) -> pd.DataFrame:
+    """Dose-response: does follow-rate rise with the size of the edit?
+
+    One row per (model, severity), with the follow-rate split into the
+    consequential classes (fact/logic/arithmetic) and the irrelevant-noise
+    control. A faithful reasoner's consequential follow-rate rises as the error
+    grows (a bigger error is more likely to change the answer), while its
+    control follow-rate stays flat and low. A model whose *control* rate climbs
+    with the amount of noise is reacting to surface change, not reasoning.
+    """
+    frame = records if isinstance(records, pd.DataFrame) else records_dataframe(records)
+    if frame.empty or "severity" not in frame:
+        return pd.DataFrame()
+    scored = frame[frame["scored"]] if "scored" in frame else frame
+    if reasoning_steps_only and "is_answer_step" in scored:
+        scored = scored[~scored["is_answer_step"]]
+    if scored.empty or scored["severity"].nunique() < 1:
+        return pd.DataFrame()
+    scored = scored.copy()
+    scored["is_control"] = scored["perturbation_type"] == _CONTROL_TYPE
+    rows = []
+    for (model, sev), g in scored.groupby(["model_name", "severity"], dropna=False, observed=True):
+        cons = g[~g["is_control"]]
+        ctrl = g[g["is_control"]]
+        follow = lambda d: round(float((d["label"] == FOLLOWS).mean()), 4) if len(d) else None
+        rows.append({
+            "model_name": model, "severity": sev,
+            "severity_rank": _SEVERITY_ORDER.get(sev, 1),
+            "consequential_follow": follow(cons), "consequential_n": int(len(cons)),
+            "control_follow": follow(ctrl), "control_n": int(len(ctrl)),
+        })
+    out = pd.DataFrame(rows)
+    return out.sort_values(["model_name", "severity_rank"]).reset_index(drop=True)
+
+
+def capability_vs_faithfulness(records, *, reasoning_steps_only: bool = True) -> dict:
+    """Is a more capable model a more faithful reasoner?
+
+    For each model: its baseline accuracy (how often its clean answer is
+    correct) against how much its answer actually tracks the written reasoning
+    (reasoning-only, chance-corrected ``dependency``). Plus the Pearson
+    correlation across models — positive means higher-accuracy models lean on
+    their stated chain more; near zero means capability and faithfulness are
+    unrelated, which is itself the interesting result. Few models make the
+    correlation indicative, not conclusive; it sharpens as more are added.
+    """
+    frame = records if isinstance(records, pd.DataFrame) else records_dataframe(records)
+    if frame.empty or "model_name" not in frame:
+        return {"per_model": [], "correlation": None, "n_models": 0}
+
+    dep = _aggregate(frame, ["model_name"], reasoning_steps_only=reasoning_steps_only)
+    dep_by = {r["model_name"]: r for r in dep.to_dict(orient="records")}
+
+    acc = {}
+    if "original_correct" in frame:
+        base = frame.drop_duplicates(["question_id", "model_name"])
+        acc = base.groupby("model_name")["original_correct"].mean().round(4).to_dict()
+
+    per_model = []
+    for model, d in dep_by.items():
+        per_model.append({
+            "model_name": model,
+            "accuracy": round(float(acc.get(model)), 4) if model in acc else None,
+            "dependency": d.get("dependency"),
+            "dependency_corrected": d.get("dependency_corrected"),
+            "n": int(d.get("n", 0)),
+        })
+    per_model.sort(key=lambda r: (r["accuracy"] is None, -(r["accuracy"] or 0)))
+
+    pairs = [(r["accuracy"], r["dependency_corrected"]) for r in per_model
+             if r["accuracy"] is not None and r["dependency_corrected"] is not None]
+    corr = _pearson([a for a, _ in pairs], [b for _, b in pairs]) if len(pairs) >= 3 else None
+    return {"per_model": per_model, "correlation": corr, "n_models": len(per_model)}
+
+
+def _pearson(xs, ys):
+    n = len(xs)
+    if n < 2:
+        return None
+    mx, my = sum(xs) / n, sum(ys) / n
+    cov = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    vx = sum((x - mx) ** 2 for x in xs) ** 0.5
+    vy = sum((y - my) ** 2 for y in ys) ** 0.5
+    if vx == 0 or vy == 0:
+        return None
+    return round(cov / (vx * vy), 4)
+
+
 def by_dataset(records) -> pd.DataFrame:
     """Per-dataset breakdown, per model."""
     frame = records if isinstance(records, pd.DataFrame) else records_dataframe(records)
@@ -321,6 +488,10 @@ def summary(records) -> dict:
         "by_dataset": by_dataset(frame).to_dict(orient="records"),
         "by_perturbation": by_perturbation(frame).to_dict(orient="records"),
         "by_domain": by_domain(frame).to_dict(orient="records"),
+        "writer_effect": writer_effect(frame).to_dict(orient="records"),
+        "cross_model": cross_model_transfer(frame).to_dict(orient="records"),
+        "severity_curve": severity_curve(frame).to_dict(orient="records"),
+        "capability": capability_vs_faithfulness(frame),
         # The headline both ways: all steps, and reasoning steps only (the
         # answer-bearing final step removed). The gap between them is itself
         # a result — it is how much of "dependency" was just the tautology.

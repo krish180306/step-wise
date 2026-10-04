@@ -51,9 +51,11 @@ The chat and agent endpoints call Groq. Before exposing them publicly, pick one:
   read result files. Only the Ask panel and `analyse` need Groq. Ship the Space
   with no `GROQ_API_KEY` secret; the Ask panel already degrades to an
   explanatory "unavailable" state (`/api/chat/status` reports it).
-- **Bring-your-own-key.** Have the visitor paste their own Groq key, used only
-  for their session. (Not built yet — the current chat reads the server's key;
-  wiring a per-request key is the change to make before enabling chat publicly.)
+- **Bring-your-own-key (built).** Ship the Space with no `GROQ_API_KEY`. The
+  Ask panel detects there is no server key (`/api/chat/status` →
+  `accepts_byo_key`) and shows a key box; the visitor's key is sent only with
+  their request, used for that request's client, and never stored or logged.
+  Everything else on the page needs no key.
 
 Do **not** set your own `GROQ_API_KEY` as a public Space secret and leave chat
 on — that spends your quota on every visitor.

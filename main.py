@@ -27,7 +27,7 @@ from stepwise.config import (
 )
 from stepwise.llm import LLMClient, load_dotenv
 
-COMMANDS = ("run", "battery", "mech", "mcp", "verify", "validate", "judge", "demo", "analyse", "analyze", "ask", "score", "dashboard", "models")
+COMMANDS = ("run", "battery", "mech", "mcp", "verify", "validate", "judge", "introspect", "demo", "analyse", "analyze", "ask", "score", "dashboard", "models")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -56,18 +56,32 @@ def build_parser() -> argparse.ArgumentParser:
                         help="questions to sample from the dataset")
     parser.add_argument("--perturbations", default=",".join(PERTURBATION_TYPES),
                         help="comma-separated perturbation classes")
-    parser.add_argument("--perturbation-model", default=PERTURBATION_MODEL,
-                        help="model that writes the perturbations")
+    parser.add_argument("--severities", default="moderate",
+                        help="edit sizes per cell for the dose-response ladder, e.g. "
+                             "minimal,moderate,severe (default: moderate)")
+    parser.add_argument("--perturbation-model", "--writer-model", dest="perturbation_model",
+                        default=PERTURBATION_MODEL,
+                        help="model that writes the perturbations (the 'writer'). Pick one NOT "
+                             "in --models to remove the self-perturbation confound.")
     parser.add_argument("--analyst-model", default=None,
                         help="model that drives the agentic analysis (defaults to the perturbation model)")
     parser.add_argument("--tests", default="early_answering,paraphrase,filler,biased_context",
                         help="battery tests to run (comma-separated)")
     parser.add_argument("--mech-model", default="Qwen/Qwen2.5-0.5B-Instruct",
                         help="local HF model for the mechanistic track")
+    parser.add_argument("--validate", action="store_true",
+                        help="mech: also run the behavioural probe on the SAME local model, "
+                             "so mechanistic↔behavioural agreement is within one model (A2)")
+    parser.add_argument("--patch", action="store_true",
+                        help="mech: run activation patching (true causal tracing) and write "
+                             "a per-layer restoration curve")
     parser.add_argument("--max-steps", type=int, default=8,
                         help="cap on steps perturbed per question")
     parser.add_argument("--rerun-mode", default="full", choices=("full", "continue"),
                         help="'full' shows the whole perturbed trace; 'continue' truncates at the edited step")
+    parser.add_argument("--use-reference-cot", action="store_true",
+                        help="reason over the dataset's own chain of thought instead of eliciting "
+                             "one per model (auto-on for --dataset probe)")
     parser.add_argument("--bbh-subtask", default="logical_deduction_five_objects",
                         help="which BIG-Bench Hard subtask to use")
     parser.add_argument("--seed", type=int, default=0, help="sampling seed")
@@ -105,9 +119,11 @@ def cmd_run(args) -> int:
         models=[m.strip() for m in args.models.split(",") if m.strip()],
         n_samples=args.n_samples,
         perturbation_types=[p.strip() for p in args.perturbations.split(",") if p.strip()],
+        severities=[s.strip() for s in args.severities.split(",") if s.strip()],
         perturbation_model=args.perturbation_model,
         max_steps_per_sample=args.max_steps,
         rerun_mode=args.rerun_mode,
+        use_reference_cot=args.use_reference_cot or args.dataset == "probe",
         bbh_subtask=args.bbh_subtask,
         seed=args.seed,
         use_cache=not args.no_cache,
@@ -130,6 +146,37 @@ def cmd_run(args) -> int:
     table = score.faithfulness_scores(result.records)
     print("\nFaithfulness = (ignores + corrects) / n\n")
     print(score.format_table(table))
+
+    # The probe set has ground-truth critical steps, so report the real
+    # sensitivity/specificity the other datasets cannot give.
+    if config.dataset == "probe":
+        from stepwise import probe_score
+        print("\nProbe set — measured against KNOWN critical steps:\n")
+        print(probe_score.format_probe(result.records))
+
+    # Dose-response ladder, when more than one severity was run.
+    if len(config.severities) > 1:
+        curve = score.severity_curve(result.records)
+        if not curve.empty:
+            print("\nSeverity ladder — follow-rate by edit size (reasoning steps only):")
+            print("  model / severity        consequential   control")
+            for _, r in curve.iterrows():
+                cf = "—" if r["consequential_follow"] is None else f"{r['consequential_follow']:.0%}"
+                ct = "—" if r["control_follow"] is None else f"{r['control_follow']:.0%}"
+                print(f"  {r['model_name']:<16} {r['severity']:<9} {cf:>12}   {ct:>8}")
+
+    # Capability vs faithfulness across the models in this run.
+    cap = score.capability_vs_faithfulness(result.records)
+    if cap["per_model"]:
+        print("\nCapability vs faithfulness (accuracy vs reasoning-only dependency):")
+        for r in cap["per_model"]:
+            acc = "—" if r["accuracy"] is None else f"{r['accuracy']:.0%}"
+            dep = "—" if r["dependency_corrected"] is None else f"{r['dependency_corrected']:.0%}"
+            print(f"  {r['model_name']:<16} accuracy {acc:>5}   dependency {dep:>5}")
+        if cap["correlation"] is not None:
+            print(f"  Pearson r = {cap['correlation']} across {cap['n_models']} models "
+                  f"(indicative; sharpens with more models)")
+
     print(f"\nNext: python main.py analyse --dataset {config.dataset}")
     return 0
 
@@ -176,7 +223,9 @@ def cmd_mech(args) -> int:
 
     import warnings as _w
     _w.filterwarnings("ignore")
-    from stepwise.mech import LocalModel, step_effects, save_effects, agreement
+    from stepwise.mech import (LocalModel, step_effects, save_effects, agreement,
+                               local_behavioural, patch_effects, patch_curve,
+                               save_patch_effects)
     from stepwise.datasets import load_samples
     from stepwise.config import RESULTS_DIR
     from stepwise.pipeline import load_records
@@ -187,6 +236,8 @@ def cmd_mech(args) -> int:
     samples = load_samples(args.dataset, n=args.n_samples, seed=args.seed, subtask=args.bbh_subtask)
 
     effects = []
+    local_labels = []       # A2: same-model behavioural labels
+    patches = []            # activation-patching results
     for i, s in enumerate(samples, 1):
         # The local model writes its own reasoning, so the measurement is about
         # that model's own chain of thought, exactly as the behavioural run.
@@ -196,6 +247,14 @@ def cmd_mech(args) -> int:
             continue
         effects += step_effects(model, s.question_id, args.mech_model, s.question, cot, ans,
                                 max_steps=args.max_steps, seed=args.seed)
+        if args.validate:
+            local_labels += local_behavioural(
+                model, s.question_id, args.mech_model, s.question, cot, ans,
+                gold_answer=s.gold_answer, answer_type=s.answer_type, choices=s.choices,
+                max_steps=args.max_steps, seed=args.seed)
+        if args.patch:
+            patches += patch_effects(model, s.question_id, args.mech_model, s.question, cot, ans,
+                                     max_steps=args.max_steps, seed=args.seed)
         print(f"  [{i}/{len(samples)}] {s.question_id}: {len(effects)} effects so far")
 
     path = Path(args.output) if args.output else RESULTS_DIR / f"{args.dataset}.mech.jsonl"
@@ -209,13 +268,37 @@ def cmd_mech(args) -> int:
         _m = lambda xs: sum(xs) / len(xs) if xs else float("nan")
         print(f"mean log-prob drop · reasoning steps: {_m(reasoning):+.3f}  "
               f"answer step: {_m(answer_step):+.3f}")
+
+    # A2: the honest validation — same model on both sides.
+    if args.validate and local_labels:
+        import json as _json
+        (RESULTS_DIR / f"{args.dataset}.mech_behav.jsonl").write_text(
+            "\n".join(_json.dumps(r) for r in local_labels) + "\n", encoding="utf-8")
+        ag = agreement(effects, local_labels, by_key=("question_id", "step_idx"))
+        if ag["agrees"] is not None:
+            print(f"SAME-MODEL agreement ({args.mech_model}) · follows drop "
+                  f"{ag['follows_mean_drop']} (n={ag['follows_n']}) vs ignores drop "
+                  f"{ag['ignores_mean_drop']} (n={ag['ignores_n']}) -> "
+                  f"{'AGREE' if ag['agrees'] else 'DISAGREE'}")
+
+    # Activation patching: the causal-tracing curve.
+    if args.patch and patches:
+        ppath = RESULTS_DIR / f"{args.dataset}.patch.jsonl"
+        save_patch_effects(patches, ppath)
+        curve = patch_curve(patches)
+        print(f"\nactivation patching · {curve['n_cells']} cells traced -> {ppath.name}")
+        for row in curve["curve"]:
+            bar = "#" * int(max(0, min(1, row["restoration"])) * 30)
+            print(f"  layer {row['layer']:>2}  {row['restoration']:+.2f} {bar}")
+
     beh_path = RESULTS_DIR / f"{args.dataset}.jsonl"
     if beh_path.exists():
         ag = agreement(effects, load_records(beh_path))
         if ag["agrees"] is not None:
-            print(f"behavioural agreement · follows drop {ag['follows_mean_drop']} "
-                  f"(n={ag['follows_n']}) vs ignores drop {ag['ignores_mean_drop']} "
-                  f"(n={ag['ignores_n']}) -> {'AGREE' if ag['agrees'] else 'DISAGREE'}")
+            print(f"\ncross-model agreement (local drop vs Groq labels — different models, "
+                  f"weaker) · follows {ag['follows_mean_drop']} (n={ag['follows_n']}) vs "
+                  f"ignores {ag['ignores_mean_drop']} (n={ag['ignores_n']}) -> "
+                  f"{'AGREE' if ag['agrees'] else 'DISAGREE'}")
     return 0
 
 
@@ -306,6 +389,24 @@ def cmd_judge(args) -> int:
     print(f"\n{len(rows)} cells judged -> {out.name}. "
           f"judge agreed with the automatic label on {agree}/{len(rows)}.")
     print(f"Now: python main.py validate --dataset {args.dataset}")
+    return 0
+
+
+def cmd_introspect(args) -> int:
+    """Self-knowledge probe: does the model notice its reasoning was corrupted?"""
+    if not (RESULTS_DIR / f"{args.dataset}.jsonl").exists():
+        sys.exit(f"No results for {args.dataset}. Run an evaluation first.")
+    model = args.analyst_model or args.perturbation_model
+    _require_key([model])
+    import json as _json
+    from stepwise.introspect import introspect_run, format_introspection
+    from stepwise.llm import LLMClient
+    client = LLMClient(use_cache=not args.no_cache)
+    rows = introspect_run(args.dataset, client, model=model, limit=args.n_samples)
+    out = RESULTS_DIR / f"{args.dataset}.introspect.jsonl"
+    out.write_text("\n".join(_json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    print(f"\n{len(rows)} cells probed -> {out.name}\n")
+    print(format_introspection(rows))
     return 0
 
 
@@ -447,6 +548,7 @@ def main(argv=None) -> int:
         "verify": cmd_verify,
         "validate": cmd_validate,
         "judge": cmd_judge,
+        "introspect": cmd_introspect,
         "demo": cmd_demo,
         "analyse": cmd_analyse,
         "analyze": cmd_analyse,

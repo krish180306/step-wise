@@ -186,3 +186,48 @@ def test_an_ordinary_bad_request_is_still_not_retried():
     with pytest.raises(LLMError, match=r"after 1 attempt\(s\)"):
         _with_retries(bad)
     assert len(calls) == 1
+
+
+# --------------------------------------------------------------------------
+# A4: bring-your-own-key
+# --------------------------------------------------------------------------
+
+
+def test_byo_key_builds_provider_with_that_key():
+    from stepwise.llm import LLMClient
+    from stepwise.config import resolve_model
+
+    client = LLMClient(api_keys={"groq": "gsk_visitor_key"})
+    provider = client.provider_for(resolve_model("gpt-oss-120b"))
+    assert provider._api_key == "gsk_visitor_key"
+
+
+def test_empty_byo_key_falls_back_to_env_path():
+    from stepwise.llm import LLMClient
+    from stepwise.config import resolve_model
+
+    client = LLMClient(api_keys={"groq": ""})
+    provider = client.provider_for(resolve_model("gpt-oss-120b"))
+    # Empty string is dropped, so the provider uses its normal env lookup.
+    assert provider._api_key is None
+
+
+def test_explicit_key_overrides_env_in_make_client(monkeypatch):
+    # The OpenAI-compatible base prefers the explicit key when forming a client.
+    from stepwise.llm import GroqProvider
+
+    captured = {}
+
+    class _FakeGroq:
+        def __init__(self, api_key=None):
+            captured["key"] = api_key
+
+    monkeypatch.setattr("groq.Groq", _FakeGroq, raising=False)
+    import sys, types
+    if "groq" not in sys.modules:
+        mod = types.ModuleType("groq")
+        mod.Groq = _FakeGroq
+        sys.modules["groq"] = mod
+    provider = GroqProvider(api_key="explicit-key")
+    _ = provider.client
+    assert captured["key"] == "explicit-key"

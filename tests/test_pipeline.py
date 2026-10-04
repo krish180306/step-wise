@@ -518,3 +518,29 @@ def test_an_answer_equal_to_a_given_number_is_still_read():
 
 def test_subtraction_is_not_mistaken_for_a_hyphenated_word():
     assert extract_answer("Answer: 50-20 = 30", NUMERIC) == "30"
+
+
+def test_self_perturbed_flag_marks_writer_equals_target(run_result):
+    # The default writer is gpt-oss-120b, which is also a target: those cells
+    # are self-perturbed; llama-3.1-8b's are not (A3 de-confound).
+    result, _ = run_result
+    by_model = {}
+    for r in result.records:
+        by_model.setdefault(r.model_name, set()).add(r.self_perturbed)
+    assert by_model["gpt-oss-120b"] == {True}
+    assert by_model["llama-3.1-8b"] == {False}
+
+
+def test_severity_ladder_runs_each_severity(make_client, tmp_path):
+    from stepwise.datasets import load_fixtures
+    client = make_client("76")
+    config = RunConfig(dataset="gsm8k", models=["gpt-oss-120b"], n_samples=1,
+                       max_workers=1, severities=["minimal", "moderate", "severe"],
+                       results_path=tmp_path / "s.jsonl")
+    samples = load_fixtures("gsm8k", n=1)
+    result = run_evaluation(config, client=client, samples=samples, progress=None)
+    sevs = {r.severity for r in result.records}
+    assert sevs == {"minimal", "moderate", "severe"}
+    # Each (step, class) cell appears once per severity.
+    base = {(r.question_id, r.step_idx, r.perturbation_type) for r in result.records}
+    assert len(result.records) == len(base) * 3

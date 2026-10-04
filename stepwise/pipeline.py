@@ -125,6 +125,14 @@ class EvalRecord:
     perturbed_step: str = ""
     perturbation_method: str = ""
     perturbation_model: str = ""
+    #: Edit size for this cell: "minimal" | "moderate" | "severe". Feeds the
+    #: dose-response ladder (:func:`stepwise.score.severity_curve`).
+    severity: str = "moderate"
+    #: True when the model that wrote this perturbation is the same model being
+    #: tested (writer == target). Those cells carry the self-perturbation
+    #: confound — a model editing its own reasoning — so analysis can split them
+    #: out and report the dependence measured by an *independent* writer.
+    self_perturbed: bool = False
     answer_type: str = ""
     #: How many answers the model is choosing between (2 for yes/no, 5 for a
     #: five-way MCQ, 0 for numeric/span). Feeds the chance correction in
@@ -233,7 +241,15 @@ def elicit_trace(
     """
     if use_reference_cot and sample.reference_cot:
         cot = sample.reference_cot
-        answer = sample.gold_answer
+        # The baseline is what THIS model concludes from the clean shared
+        # reasoning — not the gold answer — so each cell measures the
+        # corruption's effect on this particular model. (Falls back to gold if
+        # the model returns nothing parseable on the clean trace.)
+        answer = rerun_with_cot(
+            sample, spec, client, cot,
+            cache_key=make_cache_key(kind="refbase", question_id=sample.question_id,
+                                     model=spec.api_id),
+        ) or sample.gold_answer
     else:
         response = client.complete(
             spec,
@@ -338,6 +354,7 @@ def evaluate_cell(
     *,
     perturbation_model: str,
     rerun_mode: str = "full",
+    severity: str = "moderate",
 ) -> EvalRecord:
     """Run one cell end to end and return its record."""
     step = extracted.step(step_idx)
@@ -360,8 +377,14 @@ def evaluate_cell(
         is_answer_step=step_idx >= len(extracted),
         rerun_mode=rerun_mode,
         perturbation_model=perturbation_model,
+        severity=severity,
+        self_perturbed=resolve_model(perturbation_model).api_id == spec.api_id,
     )
 
+    # Keep the "moderate" cache identity exactly as before severities existed,
+    # so prior cached perturbations and re-runs are reused; only the ladder's
+    # minimal/severe edits get their own keys.
+    sev_key = {} if severity == "moderate" else {"severity": severity}
     try:
         perturbation = perturb_step(
             step.text,
@@ -370,6 +393,7 @@ def evaluate_cell(
             model=perturbation_model,
             question=sample.question,
             context=_context_for(extracted, step_idx),
+            severity=severity,
             # The step text must be part of the key. Each target model writes
             # its own chain of thought, so "question 1, step 2" is different
             # text for each of them — keying without it hands model B the
@@ -383,6 +407,7 @@ def evaluate_cell(
                 perturbation_type=ptype,
                 model=perturbation_model,
                 step=hashlib.sha256(step.text.encode("utf-8")).hexdigest()[:16],
+                **sev_key,
             ),
         )
         record.perturbed_step = perturbation.text
@@ -466,7 +491,7 @@ def run_sample(
     on_record: Callable[[EvalRecord], None] | None = None,
 ) -> tuple[Trace, list[EvalRecord]]:
     """Evaluate every cell of one (sample, model) pair."""
-    trace = elicit_trace(sample, spec, client)
+    trace = elicit_trace(sample, spec, client, use_reference_cot=config.use_reference_cot)
     extracted = extract_steps(trace.cot)
     # With no parseable baseline answer there is nothing for a perturbed answer
     # to move away from, and every cell would read as "follows".
@@ -474,23 +499,26 @@ def run_sample(
         return trace, []
 
     cells = iter_cells(extracted, config.perturbation_types, config.max_steps_per_sample)
+    severities = config.severities or ["moderate"]
 
     records: list[EvalRecord] = []
     for step_idx, ptype in cells:
-        record = evaluate_cell(
-            sample,
-            trace,
-            extracted,
-            spec,
-            client,
-            step_idx,
-            ptype,
-            perturbation_model=config.perturbation_model,
-            rerun_mode=config.rerun_mode,
-        )
-        records.append(record)
-        if on_record:
-            on_record(record)
+        for severity in severities:
+            record = evaluate_cell(
+                sample,
+                trace,
+                extracted,
+                spec,
+                client,
+                step_idx,
+                ptype,
+                perturbation_model=config.perturbation_model,
+                rerun_mode=config.rerun_mode,
+                severity=severity,
+            )
+            records.append(record)
+            if on_record:
+                on_record(record)
     return trace, records
 
 
@@ -509,6 +537,7 @@ def run_evaluation(
         )
     samples = list(samples)
     specs = [resolve_model(name) for name in config.models]
+    writer = resolve_model(config.perturbation_model)
 
     records: list[EvalRecord] = []
     traces: dict[str, Trace] = {}
@@ -517,6 +546,17 @@ def run_evaluation(
     def _log(message: str) -> None:
         if progress:
             progress(message)
+
+    # Self-perturbation confound: if the writer is also a target, it edits its
+    # own reasoning for those cells. Flag it up front; every such cell is marked
+    # ``self_perturbed`` so the score can report the clean, independent subset.
+    confounded = [s.name for s in specs if s.api_id == writer.api_id]
+    if confounded:
+        _log(
+            f"NOTE: writer {writer.display} also under test ({', '.join(confounded)}); "
+            f"those cells are marked self_perturbed. Use --writer-model to remove the "
+            f"confound entirely."
+        )
 
     for spec in specs:
         _log(f"\n=== {spec.display} ({spec.api_id}) on {config.dataset} ===")
