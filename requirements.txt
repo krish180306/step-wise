@@ -4,10 +4,12 @@ pandas>=2.0
 numpy>=1.24
 datasets>=2.18
 
-# Dashboard (FastAPI 0.115 needs starlette <0.47; pinned so the optional
-# `mcp` extra, which pulls a newer starlette, cannot break the dashboard)
-fastapi>=0.110,<0.116
-starlette>=0.40,<0.47
+# Dashboard. FastAPI >=0.116 works with starlette >=0.47, which is what the
+# optional `mcp` extra (via sse-starlette) also wants — so they co-install on a
+# consistent set instead of the old fastapi<0.116 / starlette<0.47 skew that
+# broke when mcp upgraded starlette underneath it. Let fastapi pin its own
+# compatible starlette rather than pinning starlette here.
+fastapi>=0.116
 uvicorn>=0.27
 
 # Mechanistic track (local model on a GPU). Heavy; install only for `mech`.
