@@ -560,18 +560,26 @@ def introspect(run: str) -> dict:
 
 @app.get("/api/probe")
 def probe(run: str = "probe") -> dict:
-    """Faithfulness-probe scores: sensitivity vs control, against known
-    critical steps. Only meaningful for a probe run."""
+    """The faithfulness benchmark: its manifest, and (if a run exists) the
+    tiered scorecard — sensitivity, distractor and control follow, against
+    known critical steps."""
+    from ..benchmark import build_manifest
     from ..probe_score import probe_summary
 
+    manifest = build_manifest()
+    out = {"manifest": _json_safe({
+        "name": manifest["name"], "version": manifest["version"],
+        "n_items": manifest["n_items"], "by_tier": manifest["by_tier"],
+        "by_domain": manifest["by_domain"],
+        "fallback_coverage": manifest["fallback_coverage"]["coverage"],
+    })}
     path = RESULTS_DIR / (run if run.endswith(".jsonl") else f"{run}.jsonl")
     if not path.exists():
-        return {"available": False, "run": run}
-    records = load_records(path)
-    summary = probe_summary(records)
+        return {"available": False, **out}
+    summary = probe_summary(load_records(path))
     if not summary["per_model"]:
-        return {"available": False, "run": run}
-    return {"available": True, **_json_safe(summary)}
+        return {"available": False, **out}
+    return {"available": True, **out, **_json_safe(summary)}
 
 
 @app.get("/api/health")

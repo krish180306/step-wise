@@ -524,6 +524,13 @@ table.data tbody tr.selectable { cursor: pointer; }
         <p class="note" id="domain-note" style="margin-top:14px;"></p>
       </div>
 
+      <div id="leaderboard-block">
+        <h3 style="font-size:19px; margin-bottom:6px;">Best model per domain</h3>
+        <p class="note" style="margin-bottom:16px;">Which model to trust for which kind of reasoning — by two measures at once. <b>Dependence</b> is how load-bearing the model's chain of thought is in that domain (chance-corrected); <b>accuracy</b> is how often its clean answer is right. They're not the same: a model can be accurate while its reasoning is inert. ◆ marks the most faithful model in a domain, ● the most accurate.</p>
+        <div class="table-scroll"><table class="data" id="leaderboard-table"></table></div>
+        <p class="note" id="leaderboard-note" style="margin-top:12px;"></p>
+      </div>
+
       <div id="probe-block">
         <h3 style="font-size:19px; margin-bottom:6px;">Probe set — measured against known critical steps</h3>
         <p class="note" style="margin-bottom:16px;">Everywhere else "load-bearing" is inferred. The probe set is hand-authored with the critical step <em>known</em>, so a corruption has a correct outcome: breaking the critical step <em>should</em> move a faithful model's answer; the irrelevant-noise control should not. <b>Sensitivity</b> is how often the answer moved when the key step broke; <b>control</b> how often it moved on a meaningless edit; <b>discrimination</b> (sensitivity − control) is the one number that says how much the stated reasoning is really doing.</p>
@@ -824,6 +831,7 @@ async function refresh() {
   renderBreakdown();
   renderTautology();
   renderDomainChart();
+  renderLeaderboard();
   renderBattery();
   renderMech();
   renderRegression();
@@ -1243,23 +1251,38 @@ async function renderProbe() {
   if (!block) return;
   let d;
   try { d = await api("/api/probe", { run: "probe" }); } catch { d = { available: false }; }
+
+  // Benchmark manifest line, shown whether or not a run exists.
+  const m = d.manifest;
+  if (m) {
+    let bar = $("probe-manifest");
+    if (!bar) { bar = document.createElement("p"); bar.id = "probe-manifest"; bar.className = "note"; bar.style.marginBottom = "14px"; $("probe-table").parentNode.insertBefore(bar, $("probe-table")); }
+    const tiers = Object.entries(m.by_tier || {}).map(([k, v]) => `${v} ${k}`).join(" · ");
+    bar.innerHTML = `<b>${esc(m.name)} v${esc(m.version)}</b> — ${m.n_items} items (${esc(tiers)}), ${Object.keys(m.by_domain || {}).length} domains; ${pct(m.fallback_coverage)} corruptible offline. <code>python main.py benchmark</code>`;
+  }
+
   if (!d.available || !(d.per_model || []).length) {
-    $("probe-table").innerHTML = `<tbody><tr><td class="empty-state">No probe run yet. <code>python main.py --dataset probe</code> — a hand-authored set with known load-bearing steps, so this becomes a real sensitivity/control measure.</td></tr></tbody>`;
+    $("probe-table").innerHTML = `<tbody><tr><td class="empty-state">No run against the benchmark yet. <code>python main.py --dataset probe</code> — every model reasons over the same authored chains, so this becomes a real sensitivity / distractor / control measure.</td></tr></tbody>`;
     return;
   }
-  $("probe-table").innerHTML =
-    `<thead><tr><th>model</th><th>sensitivity<br><span style="font-weight:400;opacity:.6">critical step → moved</span></th>` +
+  const discCol = (disc) => disc == null ? "inherit" : disc > 0.4 ? "var(--accent)" : disc < 0.15 ? "var(--follows)" : "inherit";
+  const row = (label, r) =>
+    `<tr><td>${esc(label)}</td>` +
+    `<td class="num">${r.sensitivity == null ? "—" : pct(r.sensitivity)} <span style="opacity:.5">n=${r.sensitivity_n}</span></td>` +
+    `<td class="num" style="color:${(r.distractor_follow || 0) > 0.3 ? "var(--follows)" : "inherit"}">${r.distractor_follow == null ? "—" : pct(r.distractor_follow)}</td>` +
+    `<td class="num" style="color:${(r.control_follow || 0) > 0.3 ? "var(--follows)" : "inherit"}">${r.control_follow == null ? "—" : pct(r.control_follow)}</td>` +
+    `<td class="num" style="color:${discCol(r.discrimination)}; font-weight:600;">${r.discrimination == null ? "—" : pct(r.discrimination)}</td></tr>`;
+  const head = `<thead><tr><th>model / tier</th>` +
+    `<th>sensitivity<br><span style="font-weight:400;opacity:.6">critical → moved</span></th>` +
+    `<th>distractor follow<br><span style="font-weight:400;opacity:.6">looks-critical → moved</span></th>` +
     `<th>control follow<br><span style="font-weight:400;opacity:.6">noise → moved</span></th>` +
-    `<th>redundant follow</th><th>discrimination<br><span style="font-weight:400;opacity:.6">sens − control</span></th></tr></thead><tbody>` +
-    d.per_model.map((r) => {
-      const disc = r.discrimination;
-      const col = disc == null ? "inherit" : disc > 0.4 ? "var(--accent)" : disc < 0.15 ? "var(--follows)" : "inherit";
-      return `<tr><td>${esc(r.model_name)}</td>` +
-        `<td class="num">${r.sensitivity == null ? "—" : pct(r.sensitivity)} <span style="opacity:.5">n=${r.sensitivity_n}</span></td>` +
-        `<td class="num" style="color:${(r.control_follow || 0) > 0.3 ? "var(--follows)" : "inherit"}">${r.control_follow == null ? "—" : pct(r.control_follow)}</td>` +
-        `<td class="num">${r.redundant_follow == null ? "—" : pct(r.redundant_follow)}</td>` +
-        `<td class="num" style="color:${col}; font-weight:600;">${disc == null ? "—" : pct(disc)}</td></tr>`;
-    }).join("") + `</tbody>`;
+    `<th>discrimination</th></tr></thead>`;
+  const tierRows = (d.by_tier || []).filter((r) => r.model_name === d.per_model[0].model_name);
+  $("probe-table").innerHTML = head + `<tbody>` +
+    d.per_model.map((r) => row(r.model_name, r)).join("") +
+    (tierRows.length ? `<tr><td colspan="5" class="label" style="padding-top:12px;">${esc(d.per_model[0].model_name)} by difficulty tier</td></tr>` +
+      tierRows.map((r) => row("· " + r.tier, r)).join("") : "") +
+    `</tbody>`;
 }
 
 /* ===========================================================================
@@ -1278,6 +1301,41 @@ function renderTautology() {
       return `<tr><td>${esc(m)}</td><td class="num">${pct(a)}</td><td class="num">${pct(r)}</td>` +
         `<td class="num" style="color:${share > 0.5 ? "var(--follows)" : "inherit"}">${a > 0 ? pct(share) : "—"}</td></tr>`;
     }).join("") + `</tbody>`;
+}
+
+function renderLeaderboard() {
+  const host = $("leaderboard-table");
+  if (!host) return;
+  const lb = state.summary.domain_leaderboard || {};
+  const domains = lb.domains || [], models = lb.models || [];
+  if (!domains.length || !models.length) {
+    host.innerHTML = `<tbody><tr><td class="empty-state">This run covers one domain — the per-domain ranking needs at least two. Run more datasets (or <code>--dataset probe</code>) to populate it.</td></tr></tbody>`;
+    $("leaderboard-note").textContent = "";
+    return;
+  }
+  const cell = (d, m) => {
+    const v = (lb.matrix[d] || {})[m];
+    if (!v) return `<td class="num" style="opacity:.3">—</td>`;
+    const w = lb.winners[d] || {};
+    const fWin = w.by_faithfulness === m, aWin = w.by_accuracy === m;
+    const dep = v.dependence == null ? "—" : pct(v.dependence);
+    const acc = v.accuracy == null ? "—" : pct(v.accuracy);
+    return `<td class="num" style="${fWin ? "background:color-mix(in oklch,var(--accent),transparent 86%)" : ""}">` +
+      `<span style="color:${fWin ? "var(--accent)" : "inherit"};font-weight:${fWin ? 700 : 400}">${fWin ? "◆ " : ""}${dep}</span>` +
+      ` <span style="opacity:.45">/</span> ` +
+      `<span style="color:${aWin ? "var(--ink)" : "var(--ink-3)"};font-weight:${aWin ? 700 : 400}">${aWin ? "● " : ""}${acc}</span></td>`;
+  };
+  host.innerHTML =
+    `<thead><tr><th>domain</th>${models.map((m) => `<th>${esc(m)}<br><span style="font-weight:400;opacity:.55">dependence / accuracy</span></th>`).join("")}</tr></thead>` +
+    `<tbody>${domains.map((d) => `<tr><td style="font-weight:600">${esc(d)}</td>${models.map((m) => cell(d, m)).join("")}</tr>`).join("")}</tbody>`;
+  // Summary: the winner per domain, and each model's home turf.
+  const wins = domains.map((d) => {
+    const w = lb.winners[d] || {};
+    const same = w.by_faithfulness === w.by_accuracy;
+    return `<b>${esc(d)}</b>: ${esc(w.by_faithfulness || "—")}${same ? "" : ` <span style="opacity:.6">(most accurate: ${esc(w.by_accuracy || "—")})</span>`}`;
+  }).join(" · ");
+  $("leaderboard-note").innerHTML = "Most faithful reasoner per domain — " + wins +
+    ". Where the faithful and the accurate model differ, the accurate one is getting the answer without its stated reasoning carrying it.";
 }
 
 function renderDomainChart() {

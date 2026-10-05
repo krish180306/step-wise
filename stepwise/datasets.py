@@ -414,6 +414,8 @@ def load_probe(n: int = 50, seed: int = 0, **_) -> list[Sample]:
                 meta={
                     "critical_steps": item.get("critical_steps", []),
                     "redundant_steps": item.get("redundant_steps", []),
+                    "distractor_steps": item.get("distractor_steps", []),
+                    "tier": item.get("tier", "easy"),
                     "n_authored_steps": len(steps),
                     "notes": item.get("notes", ""),
                     "source": "probe",

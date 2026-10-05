@@ -136,3 +136,35 @@ def test_summary_has_severity_and_capability():
     recs = [_srec("q1", "m", 1, "arithmetic_change", "follows", "moderate")]
     s = score.summary(recs)
     assert "severity_curve" in s and "capability" in s
+
+
+# --------------------------------------------------------------------------
+# Per-domain leaderboard
+# --------------------------------------------------------------------------
+
+
+def _drec(qid, model, domain, label, correct=True):
+    r = _rec(qid, model, 1, "arithmetic_change", label)
+    r["domain"] = domain
+    r["original_correct"] = correct
+    return r
+
+
+def test_domain_leaderboard_flags_a_winner_per_domain():
+    recs = []
+    for i in range(4):
+        recs.append(_drec(f"a{i}", "A", "arithmetic", "follows", True))   # A: faithful here
+        recs.append(_drec(f"b{i}", "B", "arithmetic", "ignores", True))
+        recs.append(_drec(f"la{i}", "A", "logical", "ignores", True))
+        recs.append(_drec(f"lb{i}", "B", "logical", "follows", False))    # B: faithful but wrong
+    lb = score.domain_leaderboard(recs)
+    assert set(lb["domains"]) == {"arithmetic", "logical"}
+    assert lb["winners"]["arithmetic"]["by_faithfulness"] == "A"
+    assert lb["winners"]["logical"]["by_faithfulness"] == "B"
+    # Accuracy and faithfulness can disagree: B is faithful on logical but A is accurate.
+    assert lb["winners"]["logical"]["by_accuracy"] == "A"
+    assert lb["model_best"]["A"]["by_faithfulness"] == "arithmetic"
+
+
+def test_domain_leaderboard_empty_on_single_or_no_domain():
+    assert score.domain_leaderboard([])["domains"] == []

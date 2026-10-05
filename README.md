@@ -16,7 +16,8 @@ cp .env.example .env          # add a free key from https://console.groq.com/key
 
 python main.py demo                                 # offline, no key
 python main.py --dataset gsm8k --n_samples 50       # step-corruption run
-python main.py --dataset probe                      # faithfulness probe set (KNOWN critical steps)
+python main.py benchmark                            # validate the faithfulness benchmark + manifest
+python main.py --dataset probe                      # run a model against the benchmark (KNOWN critical steps)
 python main.py --dataset gsm8k --severities minimal,moderate,severe   # dose-response ladder
 python main.py --dataset gsm8k --writer-model allam-2-7b   # independent perturbation writer (de-confound)
 python main.py battery --dataset gsm8k              # the 5-test battery
@@ -25,7 +26,7 @@ python main.py introspect --dataset gsm8k          # self-knowledge probe: does 
 python main.py analyse --dataset gsm8k              # agent writes a report, then fact-checks it
 python main.py validate --dataset gsm8k             # label reliability + regression
 python main.py dashboard                            # http://127.0.0.1:8000
-python -m pytest tests/ -q                          # 409 tests, no network, no GPU
+python -m pytest tests/ -q                          # 423 tests, no network, no GPU
 ```
 
 ---
@@ -98,24 +99,28 @@ of the answer. No string matching, no extraction bugs. Three things here:
   step position from the answer-step confound. Flags perfect separation instead
   of printing nonsense on tiny data.
 
-### 5a. The faithfulness probe set — ground truth (`data/faithfulness_probe.jsonl`, `probe_score.py`)
+### 5a. The Stepwise Faithfulness Benchmark — ground truth (`data/`, `benchmark.py`, `probe_score.py`)
 Everywhere else "load-bearing" is *inferred*: corrupt a step, see if the answer
 moves, report a rate — but there's no ground truth to check the rate against.
-The probe set supplies it. It's a hand-authored, in-repo set (22 items across
-all domains) where each item's **critical** step (the one the answer genuinely
-depends on) and **redundant** steps (restatements, meta-commentary) are
-annotated. Every model reasons over the *same* authored chain
-(`--use-reference-cot`, auto-on for `--dataset probe`), so the labels apply
-uniformly, and a corruption now has a *correct* outcome:
+This benchmark supplies it. It's a hand-authored, in-repo set (**50 items**
+across all domains, in three difficulty tiers) where each item's **critical**
+step (the answer genuinely depends on it), **redundant** steps (restatements,
+meta-comments), and — on adversarial items — **distractor** steps (dressed up to
+look pivotal but inert) are annotated. Every model reasons over the *same*
+authored chain (`--use-reference-cot`, auto-on for `--dataset probe`), so a
+corruption has a *correct* outcome:
 
 - corrupt the **critical** step → a faithful model's answer **should move**;
-- corrupt a **redundant** step or the **noise control** → it **should not**.
+- corrupt a **distractor**, **redundant**, or the **noise control** → it **should not**.
 
-That makes it a real 2×2. `probe_score` reports **sensitivity** (moved when the
-key step broke), **control follow-rate** (moved on a meaningless edit), and
-**discrimination = sensitivity − control** — the single number for how much a
-model's stated reasoning is actually doing the work, not a rate you have to take
-on faith.
+`probe_score` reports **sensitivity**, **distractor follow**, **control
+follow**, and **discrimination = sensitivity − control** — the single number for
+how much a model's stated reasoning is actually doing the work. The benchmark
+apparatus (`benchmark.py`) adds structural **validation**, a frozen,
+checksummed **manifest** (`python main.py benchmark`), tiered scoring, and an
+independent **annotator check** (`--llm-check`) that has a second model pick
+each item's load-bearing step and reports agreement. See
+[docs/BENCHMARK.md](docs/BENCHMARK.md).
 
 ### 5c. Dose-response and capability (`perturbations.py`, `score.py`)
 - **Severity ladder.** The same cell corrupted at three edit sizes — a
@@ -195,7 +200,7 @@ tier is rate-limited and a full grid is thousands of calls.
 ## Testing, CI, Docker
 
 ```bash
-pytest tests/ -q      # 409 tests, all offline (scripted provider, fake scorer)
+pytest tests/ -q      # 423 tests, all offline (scripted provider, fake scorer)
 ```
 
 CI (`.github/workflows/ci.yml`) runs the suite on Python 3.11–3.13 with no key
@@ -224,7 +229,8 @@ stepwise/
   battery_score.py   one metric per battery test
   mech.py            log-prob step effect, same-model probe, activation patching
   introspect.py      self-knowledge probe (does the model notice?)
-  probe_score.py     sensitivity/control against the probe set's known critical steps
+  benchmark.py       the faithfulness benchmark: validation, manifest, tiered report
+  probe_score.py     sensitivity/distractor/control against known critical steps
   validation.py      Cohen's κ, annotation store, regression
   judge.py           independent LLM judge
   datasets.py        nine loaders + fixtures (incl. the in-repo probe set)
@@ -238,7 +244,7 @@ stepwise/
   dashboard/
     app.py           FastAPI API + SSE chat + annotation endpoints
     static/index.html the page
-tests/               409 tests, no network
+tests/               423 tests, no network
 docs/                call map, deploy guide, MCP config
 ```
 

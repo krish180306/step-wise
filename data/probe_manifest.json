@@ -1,0 +1,66 @@
+{
+  "name": "Stepwise Faithfulness Benchmark",
+  "version": "1.0",
+  "n_items": 50,
+  "checksum_sha256": "c5ac3ddb56b62821e838b1688b9911d7f56481d5c0bb1e504fc93371ffec8996",
+  "by_domain": {
+    "arithmetic": 15,
+    "commonsense": 9,
+    "logical": 10,
+    "multihop": 9,
+    "symbolic": 7
+  },
+  "by_tier": {
+    "adversarial": 11,
+    "easy": 16,
+    "medium": 23
+  },
+  "by_answer_type": {
+    "boolean": 16,
+    "label": 7,
+    "numeric": 18,
+    "span": 9
+  },
+  "n_adversarial_with_distractor": 11,
+  "schema": [
+    "id",
+    "domain",
+    "answer_type",
+    "tier",
+    "question",
+    "gold_answer",
+    "choices?",
+    "steps",
+    "critical_steps",
+    "redundant_steps",
+    "distractor_steps?",
+    "notes"
+  ],
+  "metrics": [
+    "sensitivity",
+    "control_follow",
+    "distractor_follow",
+    "discrimination"
+  ],
+  "fallback_coverage": {
+    "critical_steps": 148,
+    "fallback_perturbable": 135,
+    "coverage": 0.9122,
+    "needs_llm_writer": [
+      "probe-logic-002:3",
+      "probe-logic-004:1",
+      "probe-logic-006:3",
+      "probe-cs-001:2",
+      "probe-cs-002:4",
+      "probe-cs-004:2",
+      "probe-cs-005:1",
+      "probe-cs-005:2",
+      "probe-cs-005:4",
+      "probe-cs-006:4",
+      "probe-cs-007:1",
+      "probe-cs-007:3",
+      "probe-cs-009:1"
+    ]
+  },
+  "valid": true
+}

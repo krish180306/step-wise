@@ -390,6 +390,72 @@ def _pearson(xs, ys):
     return round(cov / (vx * vy), 4)
 
 
+def domain_leaderboard(records) -> dict:
+    """Which model is best in each reasoning domain — by two measures at once.
+
+    For every (model, domain): its reasoning **dependence** (chance-corrected
+    ``dependency``, reasoning steps only — how load-bearing its chain of thought
+    is) and its baseline **accuracy** (how often its clean answer is correct).
+    The winner in each domain is flagged by *each* measure, because they are not
+    the same question: a model can be accurate while its reasoning is inert
+    (right answer, corrupting the steps changes nothing), which is exactly the
+    gap this project is about. Also gives each model's strongest domain.
+    """
+    frame = records if isinstance(records, pd.DataFrame) else records_dataframe(records)
+    if frame.empty or "domain" not in frame:
+        return {"domains": [], "models": [], "matrix": {}, "winners": {}, "model_best": {}}
+
+    dep = by_domain(frame)  # reasoning-only, chance-corrected
+    dep_by = {(r["model_name"], r["domain"]): r for r in dep.to_dict(orient="records")}
+
+    # Baseline accuracy per (model, domain): one row per question, not per cell.
+    acc_by: dict[tuple, float] = {}
+    if "original_correct" in frame:
+        base = frame.drop_duplicates(["question_id", "model_name"])
+        for (m, d), g in base.groupby(["model_name", "domain"], dropna=False, observed=True):
+            acc_by[(m, d)] = round(float(g["original_correct"].mean()), 4)
+
+    domains = sorted({d for (_, d) in dep_by})
+    models = sorted({m for (m, _) in dep_by})
+    matrix: dict = {}
+    for d in domains:
+        matrix[d] = {}
+        for m in models:
+            r = dep_by.get((m, d))
+            if not r:
+                continue
+            matrix[d][m] = {
+                "dependence": r.get("dependency_corrected"),
+                "faithfulness": r.get("faithfulness_corrected"),
+                "accuracy": acc_by.get((m, d)),
+                "n": int(r.get("n", 0)),
+            }
+
+    def _argmax(items, key):
+        best, best_v = None, None
+        for name, vals in items:
+            v = vals.get(key)
+            if v is not None and (best_v is None or v > best_v):
+                best, best_v = name, v
+        return best
+
+    winners = {
+        d: {"by_faithfulness": _argmax(matrix[d].items(), "dependence"),
+            "by_accuracy": _argmax(matrix[d].items(), "accuracy")}
+        for d in domains
+    }
+    # Each model's strongest domain, by each measure.
+    model_best: dict = {}
+    for m in models:
+        cells = [(d, matrix[d].get(m, {})) for d in domains if m in matrix[d]]
+        model_best[m] = {
+            "by_faithfulness": _argmax(cells, "dependence"),
+            "by_accuracy": _argmax(cells, "accuracy"),
+        }
+    return {"domains": domains, "models": models, "matrix": matrix,
+            "winners": winners, "model_best": model_best}
+
+
 def by_dataset(records) -> pd.DataFrame:
     """Per-dataset breakdown, per model."""
     frame = records if isinstance(records, pd.DataFrame) else records_dataframe(records)
@@ -488,6 +554,7 @@ def summary(records) -> dict:
         "by_dataset": by_dataset(frame).to_dict(orient="records"),
         "by_perturbation": by_perturbation(frame).to_dict(orient="records"),
         "by_domain": by_domain(frame).to_dict(orient="records"),
+        "domain_leaderboard": domain_leaderboard(frame),
         "writer_effect": writer_effect(frame).to_dict(orient="records"),
         "cross_model": cross_model_transfer(frame).to_dict(orient="records"),
         "severity_curve": severity_curve(frame).to_dict(orient="records"),

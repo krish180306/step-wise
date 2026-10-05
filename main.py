@@ -27,7 +27,7 @@ from stepwise.config import (
 )
 from stepwise.llm import LLMClient, load_dotenv
 
-COMMANDS = ("run", "battery", "mech", "mcp", "verify", "validate", "judge", "introspect", "demo", "analyse", "analyze", "ask", "score", "dashboard", "models")
+COMMANDS = ("run", "benchmark", "battery", "mech", "mcp", "verify", "validate", "judge", "introspect", "demo", "analyse", "analyze", "ask", "score", "dashboard", "models")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -75,6 +75,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--patch", action="store_true",
                         help="mech: run activation patching (true causal tracing) and write "
                              "a per-layer restoration curve")
+    parser.add_argument("--llm-check", action="store_true",
+                        help="benchmark: have a model independently pick each item's most "
+                             "load-bearing step (inter-annotator agreement; needs a key)")
     parser.add_argument("--max-steps", type=int, default=8,
                         help="cap on steps perturbed per question")
     parser.add_argument("--rerun-mode", default="full", choices=("full", "continue"),
@@ -165,6 +168,16 @@ def cmd_run(args) -> int:
                 ct = "—" if r["control_follow"] is None else f"{r['control_follow']:.0%}"
                 print(f"  {r['model_name']:<16} {r['severity']:<9} {cf:>12}   {ct:>8}")
 
+    # Per-domain leaderboard, when the run spans more than one domain (e.g. probe).
+    lb = score.domain_leaderboard(result.records)
+    if len(lb.get("domains", [])) > 1:
+        print("\nBest model per domain (most faithful reasoner; * = also most accurate):")
+        for d in lb["domains"]:
+            w = lb["winners"][d]
+            star = " *" if w["by_faithfulness"] == w["by_accuracy"] else \
+                f"  (most accurate: {w['by_accuracy']})"
+            print(f"  {d:<14} {w['by_faithfulness']}{star}")
+
     # Capability vs faithfulness across the models in this run.
     cap = score.capability_vs_faithfulness(result.records)
     if cap["per_model"]:
@@ -178,6 +191,52 @@ def cmd_run(args) -> int:
                   f"(indicative; sharpens with more models)")
 
     print(f"\nNext: python main.py analyse --dataset {config.dataset}")
+    return 0
+
+
+def cmd_benchmark(args) -> int:
+    """Validate the faithfulness benchmark, (re)write its manifest, and report.
+
+    Offline by default: structural validation + the frozen manifest. Add
+    --llm-check for an independent second annotator (needs a key). If a probe
+    run exists, prints the tiered scorecard.
+    """
+    from stepwise import benchmark as bench
+
+    issues = bench.validate_items()
+    if issues:
+        print(f"Benchmark INVALID — {len(issues)} issue(s):")
+        for i in issues:
+            print(f"  - {i}")
+        return 1
+
+    manifest = bench.build_manifest()
+    path = bench.write_manifest()
+    cov = manifest["fallback_coverage"]
+    print(f"{bench.NAME} v{manifest['version']} — valid")
+    print(f"  {manifest['n_items']} items  ·  tiers {manifest['by_tier']}")
+    print(f"  domains {manifest['by_domain']}")
+    print(f"  offline (fallback) coverage of critical steps: {cov['coverage']:.0%} "
+          f"({cov['fallback_perturbable']}/{cov['critical_steps']})")
+    print(f"  checksum {manifest['checksum_sha256'][:16]}…  ·  manifest -> {path.name}")
+
+    results = RESULTS_DIR / "probe.jsonl"
+    if results.exists():
+        from stepwise.pipeline import load_records
+        report = bench.benchmark_report(load_records(results))
+        print("\n" + bench.format_report(report))
+    else:
+        print("\nNo probe run yet. Measure a model: python main.py --dataset probe")
+
+    if args.llm_check:
+        model = args.analyst_model or args.perturbation_model
+        _require_key([model])
+        from stepwise.llm import LLMClient
+        client = LLMClient(use_cache=not args.no_cache)
+        print(f"\nIndependent annotator check with {model} ...")
+        v = bench.llm_verify(None, client, model=model, limit=args.n_samples)
+        print(f"  agreement with author's critical step: {v['agreement']:.0%} (n={v['n']})")
+        print(f"  picked a distractor instead: {v['distractor_confusion']:.0%}")
     return 0
 
 
@@ -542,6 +601,7 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     handlers = {
         "run": cmd_run,
+        "benchmark": cmd_benchmark,
         "battery": cmd_battery,
         "mech": cmd_mech,
         "mcp": cmd_mcp,
