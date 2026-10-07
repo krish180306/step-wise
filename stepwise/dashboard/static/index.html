@@ -391,6 +391,87 @@ table.data tbody tr.selectable { cursor: pointer; }
 .empty-state.on-panel { color: var(--on-panel-3); }
 .empty-state code { background: var(--paper-2); border: 1px solid var(--rule); padding: 2px 6px; }
 .empty-state.on-panel code { background: var(--panel-3); border-color: var(--panel-rule-2); }
+
+/* ==========================================================================
+   App shell — a sidebar-navigated console that shows one focused view at a
+   time, on a single unified light surface. Overrides the broadsheet scroll
+   above by source order. The dark "panel" sections are flipped to light cards
+   by redefining the on-panel/panel tokens, so no inline styles need touching.
+   ========================================================================== */
+:root {
+  --on-panel:   var(--ink);
+  --on-panel-2: var(--ink-2);
+  --on-panel-3: var(--ink-3);
+  --on-panel-4: var(--ink-3);
+  --panel:      #ffffff;
+  --panel-2:    var(--paper);
+  --panel-3:    var(--paper-3);
+  --panel-rule: var(--rule);
+  --panel-rule-2: var(--rule-2);
+  --sidebar-w:  250px;
+  --surface:    #ffffff;
+}
+section.panel, section.panel-2 { background: transparent; color: var(--ink); border: none; }
+.note.on-panel, .label.on-panel { color: var(--ink-3); }
+
+/* Cards become discrete rounded surfaces instead of a hairline grid. */
+.card-row { background: transparent; border: none; gap: 18px; margin-top: 22px; }
+.card { background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; }
+.chip { color: var(--ink-2); border-color: var(--rule-2); }
+.chip:hover { background: var(--paper-3); border-color: var(--accent); color: var(--ink); }
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.filters { border-top-color: var(--rule); border-bottom-color: var(--rule); }
+
+header.top { display: none; }
+
+.app { display: grid; grid-template-columns: var(--sidebar-w) 1fr; align-items: start; }
+.sidebar {
+  position: sticky; top: 0; height: 100vh; overflow-y: auto; z-index: 30;
+  background: var(--surface); border-right: 1px solid var(--rule);
+  display: flex; flex-direction: column; gap: 22px; padding: 24px 16px;
+}
+.sb-brand { display: flex; align-items: center; gap: 11px; padding: 0 8px; }
+.sb-brand .glyph { width: 26px; height: 26px; border: 1.5px solid var(--ink);
+  display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; flex-shrink: 0; }
+.sb-brand .glyph i { background: var(--accent); }
+.sb-brand .name { font-family: var(--serif); font-size: 25px; line-height: 1; letter-spacing: -0.01em; }
+.sb-brand .sub { font: 500 9px/1.3 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); margin-top: 3px; }
+.sb-run { padding: 0 8px; }
+.sb-run label { display: block; font: 500 10px/1 var(--mono); letter-spacing: 0.13em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 8px; }
+.sb-run select { width: 100%; font-family: var(--mono); font-size: 12px; padding: 10px 11px;
+  border: 1px solid var(--rule-2); background: var(--paper-3); color: var(--ink); border-radius: 7px; appearance: none; }
+.sb-run select:hover { border-color: var(--accent); }
+.sb-nav { display: flex; flex-direction: column; gap: 2px; }
+.sb-nav .grp { font: 500 9px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-3); padding: 14px 10px 6px; }
+.sb-nav button { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left;
+  background: none; border: none; padding: 9px 11px; border-radius: 8px; color: var(--ink-2);
+  font-family: var(--sans); font-size: 14px; line-height: 1.25; transition: background .14s, color .14s; }
+.sb-nav button .ic { font-family: var(--mono); font-size: 12px; color: var(--ink-3); width: 14px; flex-shrink: 0; }
+.sb-nav button small { display: block; font-size: 11px; color: var(--ink-3); margin-top: 2px; }
+.sb-nav button:hover { background: var(--paper-3); color: var(--ink); }
+.sb-nav button.active { background: color-mix(in oklch, var(--accent), transparent 90%); color: var(--accent); font-weight: 600; }
+.sb-nav button.active .ic { color: var(--accent); }
+.sb-foot { margin-top: auto; padding: 14px 10px 0; border-top: 1px solid var(--rule);
+  font: 500 10px/1.6 var(--mono); letter-spacing: 0.04em; color: var(--ink-3); }
+
+/* The stage shows one view (section group) at a time. */
+.stage { min-width: 0; }
+.stage > section { display: none; border: none; }
+.stage > section.on { display: block; }
+.section-head { padding-top: clamp(30px, 3.4vw, 44px); }
+/* The numbered eyebrows implied a scroll order that no longer exists. */
+.section-head .label:first-child { display: none; }
+
+@media (max-width: 860px) {
+  .app { grid-template-columns: 1fr; }
+  .sidebar { position: static; height: auto; flex-direction: column; border-right: none; border-bottom: 1px solid var(--rule); }
+  .sb-nav { flex-direction: row; flex-wrap: wrap; gap: 4px; }
+  .sb-nav .grp { width: 100%; padding: 8px 10px 2px; }
+  .sb-nav button { width: auto; }
+  .sb-nav button small { display: none; }
+  .sb-foot { display: none; }
+}
 </style>
 </head>
 <body>
@@ -399,28 +480,20 @@ table.data tbody tr.selectable { cursor: pointer; }
 
 <div id="sim-banner" hidden></div>
 
-<header class="top">
-  <div class="wrap top-inner">
-    <a href="#top" class="brand">
-      <span class="glyph"><i></i><span></span><span></span><i></i></span>
-      <span class="name">Stepwise</span>
-    </a>
-    <nav class="top-nav" aria-label="Sections">
-      <a href="#heatmap">Heatmap</a>
-      <a href="#datasets">Datasets</a>
-      <a href="#findings">Findings</a>
-      <a href="#methods">Methods</a>
-      <a href="#grid">Grid</a>
-      <a href="#explorer">Explorer</a>
-      <a href="#ask">Ask</a>
-      <a href="#analysis">Analysis</a>
-    </nav>
-    <div class="run-picker">
-      <span class="label">Run</span>
-      <select class="run" id="run-select" aria-label="Select a run"></select>
-    </div>
+<div class="app">
+<aside class="sidebar">
+  <div class="sb-brand">
+    <span class="glyph"><i></i><span></span><span></span><i></i></span>
+    <div><div class="name">Stepwise</div><div class="sub">faithfulness console</div></div>
   </div>
-</header>
+  <div class="sb-run">
+    <label for="run-select">Run</label>
+    <select id="run-select" aria-label="Select a run"></select>
+  </div>
+  <nav class="sb-nav" id="sb-nav" aria-label="Views"></nav>
+  <div class="sb-foot" id="footer-note"></div>
+</aside>
+<main class="stage" id="stage">
 
 <!-- ===================== 01 · coverage ===================== -->
 <section id="top" class="hero-full">
@@ -708,12 +781,8 @@ table.data tbody tr.selectable { cursor: pointer; }
   </div>
 </section>
 
-<footer style="padding:34px 0 46px;">
-  <div class="wrap" style="display:flex; gap:16px; flex-wrap:wrap; align-items:center; justify-content:space-between;">
-    <span class="label">Stepwise · faithfulness by intervention</span>
-    <span class="label" id="footer-note"></span>
-  </div>
-</footer>
+</main>
+</div>
 
 <script>
 /* ===========================================================================
@@ -761,6 +830,52 @@ async function api(path, params = {}) {
 }
 
 /* ===========================================================================
+   Views — one focused section group at a time, driven by the sidebar
+   =========================================================================== */
+const VIEWS = [
+  { id: "overview", label: "Overview", ic: "◉", desc: "the finding", grp: "Read",
+    sections: ["top"] },
+  { id: "scores", label: "Faithfulness", ic: "▦", desc: "models × classes", grp: "Read",
+    sections: ["heatmap", "datasets"] },
+  { id: "findings", label: "Findings", ic: "◆", desc: "tautology, domains, benchmark", grp: "Read",
+    sections: ["findings"] },
+  { id: "diagnostics", label: "Diagnostics", ic: "⚗", desc: "battery, mech, patching…", grp: "Deeper",
+    sections: ["methods"] },
+  { id: "grid", label: "Step grid", ic: "▤", desc: "question × step", grp: "Deeper",
+    sections: ["grid"] },
+  { id: "explorer", label: "Explorer", ic: "⊞", desc: "flip a step, watch the answer", grp: "Deeper",
+    sections: ["explorer"] },
+  { id: "ask", label: "Ask", ic: "✶", desc: "query the run", grp: "Interact",
+    sections: ["ask"] },
+  { id: "report", label: "Report", ic: "✎", desc: "the agent's write-up", grp: "Interact",
+    sections: ["analysis"] },
+];
+
+function initNav() {
+  const nav = $("sb-nav");
+  let html = "", lastGrp = null;
+  for (const v of VIEWS) {
+    if (v.grp !== lastGrp) { html += `<div class="grp">${esc(v.grp)}</div>`; lastGrp = v.grp; }
+    html += `<button type="button" data-view="${v.id}">
+      <span class="ic">${v.ic}</span><span>${esc(v.label)}<small>${esc(v.desc)}</small></span></button>`;
+  }
+  nav.innerHTML = html;
+  nav.querySelectorAll("button").forEach((b) =>
+    b.addEventListener("click", () => showView(b.dataset.view)));
+}
+
+function showView(id) {
+  const view = VIEWS.find((v) => v.id === id) || VIEWS[0];
+  // Show only this view's sections.
+  document.querySelectorAll(".stage > section").forEach((s) => s.classList.remove("on"));
+  view.sections.forEach((sid) => { const el = $(sid); if (el) el.classList.add("on"); });
+  $("sb-nav").querySelectorAll("button").forEach((b) =>
+    b.classList.toggle("active", b.dataset.view === id));
+  state.view = id;
+  window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+}
+
+/* ===========================================================================
    Boot
    =========================================================================== */
 async function boot() {
@@ -771,6 +886,7 @@ async function boot() {
     return showNoBackend(err);
   }
   const select = $("run-select");
+  initNav();
   if (!runs.runs.length) return showNoRuns();
   state.runs = runs.runs;
 
@@ -783,6 +899,7 @@ async function boot() {
   // The server lists real runs first; this guards the default regardless.
   const first = runs.runs.find((r) => !r.simulated) || runs.runs[0];
   await loadRun(first.name);
+  showView("overview");
 }
 
 function showNoBackend(err) {
