@@ -185,3 +185,92 @@ def normal_cdf(z: float) -> float:
     import math
 
     return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+
+
+def benjamini_hochberg(pvalues: Sequence[float], *, alpha: float = 0.05) -> dict:
+    """Control the false-discovery rate across a family of tests.
+
+    A run compares many model x class x domain cells, each with its own p-value.
+    Testing them all at 0.05 means ~1 in 20 "findings" is noise. Benjamini-
+    Hochberg adjusts for that: it returns a q-value per test (the FDR-adjusted
+    p-value, order-preserving and monotone) and which tests stay significant at
+    the chosen FDR. Report the q-value, not the raw p, once more than a couple
+    of tests are on the table.
+    """
+    ps = [float(p) for p in pvalues]
+    m = len(ps)
+    if m == 0:
+        return {"qvalues": [], "rejected": [], "alpha": alpha, "n": 0, "n_significant": 0}
+    order = sorted(range(m), key=lambda i: ps[i])
+    qvals = [1.0] * m
+    prev = 1.0
+    # Walk from the largest p to the smallest, enforcing monotonicity.
+    for rank in range(m, 0, -1):
+        i = order[rank - 1]
+        prev = min(prev, ps[i] * m / rank)
+        qvals[i] = min(1.0, prev)
+    rejected = [qvals[i] <= alpha for i in range(m)]
+    return {
+        "qvalues": [round(q, 6) for q in qvals],
+        "rejected": rejected,
+        "alpha": alpha,
+        "n": m,
+        "n_significant": int(sum(rejected)),
+    }
+
+
+def rate_diff_bootstrap_ci(
+    frame: pd.DataFrame,
+    group_col: str,
+    a: str,
+    b: str,
+    *,
+    hit_labels=("follows",),
+    cluster: str = "question_id",
+    resamples: int = 2000,
+    confidence: float = 0.95,
+    seed: int = 0,
+) -> tuple[float, float, float]:
+    """Clustered CI for the difference in a rate between two groups.
+
+    ``rate(a) - rate(b)`` where rate = sum(hits)/sum(n), resampling whole
+    questions so the two groups move together under each draw (they answer the
+    same questions). Used to decide whether one model's lead in a domain is real
+    or within noise: the difference is significant when the interval excludes 0.
+    """
+    import numpy as np
+
+    scored = frame[frame["label"].isin(("follows", "ignores", "corrects"))] if "label" in frame else frame
+    fa = scored[scored[group_col] == a]
+    fb = scored[scored[group_col] == b]
+
+    def agg(f):
+        g = f.assign(_h=f["label"].isin(hit_labels).astype(int)).groupby(cluster, observed=True)
+        return g["_h"].sum(), g.size()
+
+    ha, na = agg(fa)
+    hb, nb = agg(fb)
+    clusters = sorted(set(ha.index) | set(hb.index))
+    if len(clusters) < 2:
+        da = ha.sum() / na.sum() if na.sum() else float("nan")
+        db = hb.sum() / nb.sum() if nb.sum() else float("nan")
+        p = (da - db) if da == da and db == db else float("nan")
+        return round(p, 4) if p == p else p, p, p
+    HA = np.array([ha.get(c, 0) for c in clusters], float)
+    NA = np.array([na.get(c, 0) for c in clusters], float)
+    HB = np.array([hb.get(c, 0) for c in clusters], float)
+    NB = np.array([nb.get(c, 0) for c in clusters], float)
+    point = (HA.sum() / NA.sum() if NA.sum() else np.nan) - (HB.sum() / NB.sum() if NB.sum() else np.nan)
+    k = len(clusters)
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, k, size=(resamples, k))
+    sa, sb = NA[idx].sum(1), NB[idx].sum(1)
+    da = np.divide(HA[idx].sum(1), sa, out=np.full(resamples, np.nan), where=sa > 0)
+    db = np.divide(HB[idx].sum(1), sb, out=np.full(resamples, np.nan), where=sb > 0)
+    draws = (da - db)
+    draws = draws[~np.isnan(draws)]
+    if draws.size == 0:
+        return round(float(point), 4), float("nan"), float("nan")
+    tail = (1.0 - confidence) / 2.0
+    lo, hi = np.quantile(draws, [tail, 1.0 - tail])
+    return round(float(point), 4), round(float(lo), 4), round(float(hi), 4)

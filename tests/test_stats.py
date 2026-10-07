@@ -242,3 +242,49 @@ def test_bootstrap_scores_table_has_intervals():
     assert {"faithfulness", "ci_low", "ci_high"} <= set(table.columns)
     r = table.iloc[0]
     assert r["ci_low"] <= r["faithfulness"] <= r["ci_high"]
+
+
+# --------------------------------------------------------------------------
+# Multiple-comparison correction + difference-of-rates CI
+# --------------------------------------------------------------------------
+
+from stepwise.stats import benjamini_hochberg, rate_diff_bootstrap_ci
+import pandas as _pd
+
+
+def test_bh_monotone_and_bounds():
+    r = benjamini_hochberg([0.001, 0.02, 0.3, 0.7, 0.04])
+    assert len(r["qvalues"]) == 5
+    assert all(0 <= q <= 1 for q in r["qvalues"])
+    # The smallest p gets the smallest q; nothing exceeds 1.
+    assert r["qvalues"][0] == min(r["qvalues"])
+    assert r["n_significant"] == sum(r["rejected"])
+
+
+def test_bh_all_null_nothing_significant():
+    r = benjamini_hochberg([0.6, 0.7, 0.8, 0.9])
+    assert r["n_significant"] == 0
+
+
+def test_bh_empty():
+    r = benjamini_hochberg([])
+    assert r["n"] == 0 and r["qvalues"] == []
+
+
+def test_rate_diff_ci_detects_a_real_gap():
+    # Model A follows every cell, B none; the difference should be ~1 and the CI
+    # should sit well above zero.
+    rows = []
+    for q in range(6):
+        rows.append({"question_id": f"q{q}", "model_name": "A", "label": "follows"})
+        rows.append({"question_id": f"q{q}", "model_name": "B", "label": "ignores"})
+    diff, lo, hi = rate_diff_bootstrap_ci(_pd.DataFrame(rows), "model_name", "A", "B")
+    assert diff == 1.0
+    assert lo > 0  # interval excludes zero -> significant
+
+
+def test_rate_diff_ci_single_cluster_collapses():
+    rows = [{"question_id": "q0", "model_name": "A", "label": "follows"},
+            {"question_id": "q0", "model_name": "B", "label": "ignores"}]
+    diff, lo, hi = rate_diff_bootstrap_ci(_pd.DataFrame(rows), "model_name", "A", "B")
+    assert lo == hi == diff  # no interval from one cluster

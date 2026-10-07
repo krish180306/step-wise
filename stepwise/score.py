@@ -377,6 +377,55 @@ def capability_vs_faithfulness(records, *, reasoning_steps_only: bool = True) ->
     return {"per_model": per_model, "correlation": corr, "n_models": len(per_model)}
 
 
+def multiplicity_report(records, *, reasoning_steps_only: bool = True) -> dict:
+    """Which (model x class) effects survive multiple-comparison correction.
+
+    For every model and every consequential class, test whether its follow-rate
+    exceeds that model's irrelevant-noise control (a one-sided two-proportion
+    test), then apply Benjamini-Hochberg across the whole family so the reported
+    'significant' flags control the false-discovery rate rather than firing once
+    per twenty cells by chance. The per-test p is unclustered (a first pass); the
+    correction is the point. Rows carry both the raw p and the FDR q-value.
+    """
+    frame = records if isinstance(records, pd.DataFrame) else records_dataframe(records)
+    if frame.empty:
+        return {"rows": [], "n_tests": 0, "n_significant": 0, "alpha": 0.05}
+    scored = frame[frame["scored"]] if "scored" in frame else frame
+    if reasoning_steps_only and "is_answer_step" in scored:
+        scored = scored[~scored["is_answer_step"]]
+    rows = []
+    for model, g in scored.groupby("model_name", observed=True):
+        ctrl = g[g["perturbation_type"] == "irrelevant_noise"]
+        p2 = (ctrl["label"] == FOLLOWS).mean() if len(ctrl) else 0.0
+        n2 = len(ctrl)
+        for ptype, gc in g.groupby("perturbation_type", observed=True):
+            if ptype == "irrelevant_noise":
+                continue
+            n1 = len(gc)
+            p1 = (gc["label"] == FOLLOWS).mean() if n1 else 0.0
+            rows.append({"model_name": model, "perturbation_type": ptype,
+                         "follows": round(float(p1), 4), "control_follow": round(float(p2), 4),
+                         "n": int(n1), "p_value": _two_prop_p(p1, n1, p2, n2)})
+    corr = stats.benjamini_hochberg([r["p_value"] for r in rows])
+    for r, q, rej in zip(rows, corr["qvalues"], corr["rejected"]):
+        r["q_value"] = q
+        r["significant"] = bool(rej)
+    return {"rows": rows, "n_tests": corr["n"], "n_significant": corr["n_significant"],
+            "alpha": corr["alpha"]}
+
+
+def _two_prop_p(p1, n1, p2, n2) -> float:
+    """One-sided two-proportion z-test p-value for p1 > p2."""
+    if n1 == 0 or n2 == 0:
+        return 1.0
+    pool = (p1 * n1 + p2 * n2) / (n1 + n2)
+    denom = (pool * (1 - pool) * (1 / n1 + 1 / n2)) ** 0.5
+    if denom == 0:
+        return 1.0 if p1 <= p2 else 0.0
+    z = (p1 - p2) / denom
+    return round(1.0 - stats.normal_cdf(z), 6)
+
+
 def _pearson(xs, ys):
     n = len(xs)
     if n < 2:
@@ -439,11 +488,27 @@ def domain_leaderboard(records) -> dict:
                 best, best_v = name, v
         return best
 
-    winners = {
-        d: {"by_faithfulness": _argmax(matrix[d].items(), "dependence"),
-            "by_accuracy": _argmax(matrix[d].items(), "accuracy")}
-        for d in domains
-    }
+    # Reasoning-only cells, for the significance test on the faithfulness winner.
+    rcells = frame[frame["scored"]] if "scored" in frame else frame
+    if "is_answer_step" in rcells:
+        rcells = rcells[~rcells["is_answer_step"]]
+
+    winners = {}
+    for d in domains:
+        w = {"by_faithfulness": _argmax(matrix[d].items(), "dependence"),
+             "by_accuracy": _argmax(matrix[d].items(), "accuracy")}
+        # Is the faithfulness winner's lead real, or within noise? Bootstrap the
+        # follows-rate difference between the top two models in this domain.
+        ranked = sorted(
+            (mm for mm in matrix[d].items() if mm[1].get("dependence") is not None),
+            key=lambda kv: -kv[1]["dependence"])
+        if len(ranked) >= 2:
+            a, b = ranked[0][0], ranked[1][0]
+            dcells = rcells[rcells["domain"] == d] if "domain" in rcells else rcells
+            diff, lo, hi = stats.rate_diff_bootstrap_ci(dcells, "model_name", a, b)
+            w["margin"] = {"runner_up": b, "diff": diff, "ci_low": lo, "ci_high": hi,
+                           "significant": bool((lo is not None and lo > 0) or (hi is not None and hi < 0))}
+        winners[d] = w
     # Each model's strongest domain, by each measure.
     model_best: dict = {}
     for m in models:
@@ -559,6 +624,7 @@ def summary(records) -> dict:
         "cross_model": cross_model_transfer(frame).to_dict(orient="records"),
         "severity_curve": severity_curve(frame).to_dict(orient="records"),
         "capability": capability_vs_faithfulness(frame),
+        "multiplicity": multiplicity_report(frame),
         # The headline both ways: all steps, and reasoning steps only (the
         # answer-bearing final step removed). The gap between them is itself
         # a result — it is how much of "dependency" was just the tautology.

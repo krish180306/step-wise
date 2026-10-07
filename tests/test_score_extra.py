@@ -168,3 +168,35 @@ def test_domain_leaderboard_flags_a_winner_per_domain():
 
 def test_domain_leaderboard_empty_on_single_or_no_domain():
     assert score.domain_leaderboard([])["domains"] == []
+
+
+# --------------------------------------------------------------------------
+# Multiplicity correction + leaderboard significance
+# --------------------------------------------------------------------------
+
+
+def test_multiplicity_report_applies_fdr():
+    recs = []
+    for i in range(8):
+        # fact class follows a lot; noise control does not -> should be a real effect
+        recs.append(_rec(f"q{i}", "m", 1, "fact_substitution", "follows"))
+        recs.append(_rec(f"q{i}", "m", 2, "irrelevant_noise", "ignores"))
+    mp = score.multiplicity_report(recs)
+    assert mp["n_tests"] >= 1
+    row = next(r for r in mp["rows"] if r["perturbation_type"] == "fact_substitution")
+    assert "q_value" in row and "significant" in row
+    assert row["follows"] == 1.0 and row["control_follow"] == 0.0
+
+
+def test_leaderboard_winner_significance_flag():
+    # A follows every arithmetic cell, B none, over several questions -> the
+    # winner's margin should be flagged significant.
+    recs = []
+    for i in range(8):
+        recs.append(_drec(f"a{i}", "A", "arithmetic", "follows", True))
+        recs.append(_drec(f"b{i}", "B", "arithmetic", "ignores", True))
+    lb = score.domain_leaderboard(recs)
+    margin = lb["winners"]["arithmetic"].get("margin")
+    assert margin is not None
+    assert margin["runner_up"] == "B"
+    assert margin["significant"] is True

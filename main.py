@@ -27,7 +27,7 @@ from stepwise.config import (
 )
 from stepwise.llm import LLMClient, load_dotenv
 
-COMMANDS = ("run", "benchmark", "battery", "mech", "mcp", "verify", "validate", "judge", "introspect", "demo", "analyse", "analyze", "ask", "score", "dashboard", "models")
+COMMANDS = ("run", "benchmark", "battery", "mech", "mcp", "verify", "validate", "judge", "introspect", "report", "demo", "analyse", "analyze", "ask", "score", "dashboard", "models")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -469,6 +469,16 @@ def cmd_introspect(args) -> int:
     return 0
 
 
+def cmd_report(args) -> int:
+    """Write a standalone HTML report card summarising every signal for a run."""
+    if not (RESULTS_DIR / f"{args.dataset}.jsonl").exists():
+        sys.exit(f"No results for {args.dataset}. Run an evaluation first.")
+    from stepwise.report_card import write_report
+    path = write_report(args.dataset)
+    print(f"Report card written to {path}")
+    return 0
+
+
 def cmd_demo(args) -> int:
     """Populate results offline, with no API key and no network."""
     # The demo pools every fixture family unless one was named explicitly.
@@ -609,6 +619,7 @@ def main(argv=None) -> int:
         "validate": cmd_validate,
         "judge": cmd_judge,
         "introspect": cmd_introspect,
+        "report": cmd_report,
         "demo": cmd_demo,
         "analyse": cmd_analyse,
         "analyze": cmd_analyse,

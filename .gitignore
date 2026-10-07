@@ -14,3 +14,4 @@ results/*.failed.*
 # Local model weights and activation dumps (mechanistic track)
 models/
 activations/
+results/*.html
