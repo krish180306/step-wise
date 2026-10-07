@@ -32,9 +32,44 @@ MAX_TURNS = 8
 #: gpt-oss spends hidden reasoning tokens before it writes anything, so the
 #: cap has to leave room for both the thinking and the answer.
 REPLY_MAX_TOKENS = 4096
-MAX_RESULT_CHARS = 6000
+MAX_RESULT_CHARS = 2200
 #: Kept per session so a long conversation cannot grow without bound.
 MAX_HISTORY_MESSAGES = 60
+#: Character budget per request, so a turn stays under a free-tier input
+#: tokens-per-minute cap; the oldest tool results are dropped to fit.
+MAX_CONTEXT_CHARS = 12000
+
+
+def _fit_context(messages: list[dict], budget: int = MAX_CONTEXT_CHARS) -> list[dict]:
+    """Keep the system prompt plus the most recent messages that fit ``budget``
+    characters, dropping orphaned leading tool results so the request stays
+    valid and under a small free-tier token cap."""
+    def size(m):
+        return len(str(m.get("content") or "")) + sum(
+            len(str(c)) for c in (m.get("tool_calls") or []))
+    if sum(size(m) for m in messages) <= budget:
+        return messages
+    head = messages[:1]  # system prompt
+    total = sum(size(m) for m in head)
+    kept: list[dict] = []
+    for m in reversed(messages[1:]):
+        s = size(m)
+        if kept and total + s > budget:
+            break
+        kept.append(m)
+        total += s
+    kept.reverse()
+    while kept and kept[0].get("role") in ("tool",):
+        kept.pop(0)
+    # A conversation must not start (after system) on an assistant tool-call
+    # whose results we are about to send; keep it simple by ensuring the first
+    # kept message is a user or plain assistant turn.
+    while kept and kept[0].get("role") == "assistant" and kept[0].get("tool_calls"):
+        # drop this assistant and its immediately-following tool results
+        kept.pop(0)
+        while kept and kept[0].get("role") == "tool":
+            kept.pop(0)
+    return head + kept
 
 SYSTEM_PROMPT = """You answer questions about a chain-of-thought faithfulness \
 experiment, using tools. You are talking to the person who ran it.
@@ -256,7 +291,7 @@ def stream_reply(
         try:
             response = client.complete(
                 spec,
-                messages=session.messages,
+                messages=_fit_context(session.messages),
                 tools=schemas,
                 temperature=0.2,
                 max_tokens=REPLY_MAX_TOKENS,
@@ -321,7 +356,7 @@ def stream_reply(
         )
         try:
             response = client.complete(
-                spec, messages=session.messages, temperature=0.2, max_tokens=REPLY_MAX_TOKENS
+                spec, messages=_fit_context(session.messages), temperature=0.2, max_tokens=REPLY_MAX_TOKENS
             )
             session.messages.append({"role": "assistant", "content": response.text})
             yield {"type": "text", "content": response.text}

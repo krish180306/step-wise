@@ -26,7 +26,14 @@ from .tools import AnalysisContext, TOOLS_BY_NAME, call_tool, tool_schemas
 
 MAX_TURNS = 14
 #: Tool results larger than this are truncated before going back to the model.
-MAX_RESULT_CHARS = 6000
+MAX_RESULT_CHARS = 2200
+#: Rough character budget for the conversation sent on each turn, so the request
+#: stays under a free-tier input-tokens-per-minute cap (Groq's is 7000 tokens;
+#: with the system prompt and tool schemas as fixed overhead, ~12k chars of
+#: message content keeps the whole request comfortably under it). Older tool
+#: results are dropped to fit, so the agent degrades to a shorter memory rather
+#: than erroring out on a free tier.
+MAX_CONTEXT_CHARS = 12000
 #: gpt-oss spends hidden reasoning tokens before writing anything, so the cap
 #: has to cover both. At 2,400 the final report turn came back empty.
 REPORT_MAX_TOKENS = 8192
@@ -150,6 +157,36 @@ class AnalysisReport:
         return path
 
 
+def _fit_context(messages: list[dict], budget: int = MAX_CONTEXT_CHARS) -> list[dict]:
+    """Drop the oldest tool exchanges so the request fits a token budget.
+
+    Keeps the system prompt and the opening instruction, then as many of the
+    most recent messages as fit ``budget`` characters of content. Leading
+    orphaned tool results (whose assistant tool-call was dropped) are removed so
+    the message sequence stays valid for the provider. This lets the agent run
+    on a free tier with a small input-tokens-per-minute cap instead of erroring.
+    """
+    def size(m):
+        return len(str(m.get("content") or "")) + sum(
+            len(str(c)) for c in (m.get("tool_calls") or []))
+
+    if sum(size(m) for m in messages) <= budget:
+        return messages
+    head = messages[:2]
+    total = sum(size(m) for m in head)
+    kept: list[dict] = []
+    for m in reversed(messages[2:]):
+        s = size(m)
+        if kept and total + s > budget:
+            break
+        kept.append(m)
+        total += s
+    kept.reverse()
+    while kept and kept[0].get("role") == "tool":
+        kept.pop(0)  # a tool result whose assistant tool-call was trimmed away
+    return head + kept
+
+
 def _truncate(payload: dict) -> str:
     """Serialise a tool result, trimming anything oversized."""
     text = json.dumps(payload, ensure_ascii=False, default=str)
@@ -212,6 +249,7 @@ def analyse(
     nudged = False
 
     for turn in range(1, max_turns + 1):
+        messages = _fit_context(messages)
         try:
             response = client.complete(
                 spec,
@@ -276,7 +314,7 @@ def analyse(
         )
         try:
             response = client.complete(
-                spec, messages=messages, temperature=0.2, max_tokens=REPORT_MAX_TOKENS
+                spec, messages=_fit_context(messages), temperature=0.2, max_tokens=REPORT_MAX_TOKENS
             )
         except LLMError as exc:
             return AnalysisReport(
