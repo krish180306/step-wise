@@ -34,16 +34,17 @@
   }
   // three.js r128's Color can't parse oklch(), so these are hex equivalents of
   // the page's --accent / --accent-up tokens (kept in sync by hand).
+  // Tuned to glow on the dark cinematic hero backdrop.
   const COL = {
-    node:    new THREE.Color("#3147c9"),      // resting unit
-    lit:     new THREE.Color("#7f9bff"),      // a unit the signal is passing through
-    answer:  new THREE.Color("#4e6bf0"),
-    follows: new THREE.Color("#7a4ff5"),
-    ignores: new THREE.Color("#cf8a1f"),
-    corrupt: new THREE.Color("#e23b3b"),
-    edge:    new THREE.Color("#5566a8"),      // dark blue-grey: reads on paper
-    edgeHot: new THREE.Color("#3b5bdb"),
-    signal:  new THREE.Color("#3f5fe0"),
+    node:    new THREE.Color("#6E78F0"),      // resting unit (bright indigo)
+    lit:     new THREE.Color("#C7CCFF"),      // a unit the signal is passing through
+    answer:  new THREE.Color("#8E8CFF"),
+    follows: new THREE.Color("#A77BFF"),
+    ignores: new THREE.Color("#F2B64A"),
+    corrupt: new THREE.Color("#FF6B6B"),
+    edge:    new THREE.Color("#4A5496"),      // soft indigo lines on dark
+    edgeHot: new THREE.Color("#9AA4FF"),
+    signal:  new THREE.Color("#CDD2FF"),
   };
 
   const scene = new THREE.Scene();
@@ -97,7 +98,15 @@
       const z = Math.sin(i * 1.7 + l) * 0.35;      // gentle depth
       mesh.position.set(x, y, z);
       group.add(mesh);
-      col.push({ mesh, mat, base, isAnswer, lit: 0 });
+      // A soft additive halo behind each node gives it bloom on the dark hero.
+      const halo = new THREE.Mesh(
+        new THREE.SphereGeometry(r * 2.6, 16, 16),
+        new THREE.MeshBasicMaterial({ color: base.clone(), transparent: true,
+          opacity: 0.16, blending: THREE.AdditiveBlending, depthWrite: false })
+      );
+      halo.position.copy(mesh.position);
+      group.add(halo);
+      col.push({ mesh, mat, base, isAnswer, lit: 0, halo });
     }
     layers.push(col);
   }
@@ -124,7 +133,7 @@
   const edgeGeo = new THREE.BufferGeometry();
   edgeGeo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   edgeGeo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-  const edgeMat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.52 });
+  const edgeMat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.68 });
   const edgeLines = new THREE.LineSegments(edgeGeo, edgeMat);
   group.add(edgeLines);
   const edgeColorAttr = edgeGeo.getAttribute("color");
@@ -225,14 +234,23 @@
 
   // The driver: a single rAF loop on a manual delta clock.
   let last = performance.now();
+  // Subtle mouse parallax — the network leans toward the cursor.
+  const mouse = { tx: 0, ty: 0, x: 0, y: 0 };
+  addEventListener("pointermove", (e) => {
+    mouse.tx = (e.clientX / innerWidth - 0.5) * 0.5;
+    mouse.ty = (e.clientY / innerHeight - 0.5) * 0.3;
+  });
+
   function loop(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     const t = clock.getElapsedTime();
 
-    // Idle motion.
-    group.rotation.y = Math.sin(t * 0.14) * 0.16;
-    group.rotation.x = Math.sin(t * 0.10) * 0.045;
+    // Idle motion + eased mouse parallax.
+    mouse.x += (mouse.tx - mouse.x) * 0.05;
+    mouse.y += (mouse.ty - mouse.y) * 0.05;
+    group.rotation.y = Math.sin(t * 0.14) * 0.16 + mouse.x;
+    group.rotation.x = Math.sin(t * 0.10) * 0.045 - mouse.y;
     ring.rotation.z = t * 0.5;
     ring.rotation.x = t * 0.28;
 
@@ -316,6 +334,14 @@
           nd.mat.color.copy(nd.base).lerp(COL.lit, Math.min(1, nd.lit) * 0.9);
           nd.mesh.scale.setScalar(1 + Math.min(1, nd.lit) * 0.32);
           nd.lit *= 0.95;
+        }
+        // Halo follows the node and blooms with its activity.
+        if (nd.halo) {
+          nd.halo.position.copy(nd.mesh.position);
+          nd.halo.material.color.copy(nd.mat.color);
+          const glow = nd.isAnswer ? 0.22 : 0.14;
+          nd.halo.material.opacity = glow + Math.min(1, nd.lit) * 0.5;
+          nd.halo.scale.setScalar(1 + Math.min(1, nd.lit) * 0.6);
         }
       }
     }
