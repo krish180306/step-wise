@@ -6,7 +6,7 @@
 <title>Stepwise — CoT faithfulness</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 /* ---------------------------------------------------------------------------
    Stepwise design tokens. Lifted from design/Stepwise v2.dc.html so the
@@ -674,6 +674,141 @@ body::before { content:""; position:fixed; inset:0; z-index:-1; pointer-events:n
   border: none; transition: transform .2s var(--ease), box-shadow .2s var(--ease); }
 .btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(99,102,241,.45); }
 .btn.ghost { background: transparent; color: var(--ink-2); box-shadow: none; border: 1px solid var(--rule-2); }
+
+/* ==========================================================================
+   "REASONING, AUDITED" — the real design. A warm, crafted, scientific-editorial
+   system that replaces the generic AI-premium look (no indigo, no glass, no
+   glow, no gradient text). Characterful serif headings, a clean sans for UI, a
+   precise mono for figures; warm paper + ink + one confident deep-teal, with
+   rust reserved for "the break". Last layer, so it wins.
+   ========================================================================== */
+:root {
+  --paper:   #F7F4ED;   /* warm, not the cliché cream */
+  --paper-2: #FFFFFF;
+  --paper-3: #FDFBF6;
+  --surface: #FFFFFF;
+  --ink:     #211E17;
+  --ink-2:   #5B5648;
+  --ink-3:   #8C8676;
+  --rule:    #E6E0D2;
+  --rule-2:  #D8D1BF;
+
+  --accent:      #0E6E62;   /* deep teal */
+  --accent-up:   #159285;
+  --accent-dim:  #0A574E;
+  --primary-soft:#E4EFEC;
+  --break:       #C0432A;   /* rust — the injected error / "follows" */
+  --hold:        #5F7A3C;   /* moss — reasoning held */
+
+  --follows:  #C0432A;
+  --ignores:  #B9892F;
+  --corrects: #5F7A3C;
+
+  --panel: #FFFFFF; --panel-2: var(--paper); --panel-3: #FBF8F1;
+  --panel-rule: var(--rule); --panel-rule-2: var(--rule-2);
+  --on-panel: var(--ink); --on-panel-2: var(--ink-2); --on-panel-3: var(--ink-3); --on-panel-4: var(--ink-3);
+
+  --sans:  'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --serif: 'Fraunces', Georgia, 'Times New Roman', serif;
+  --mono:  'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --code:  'IBM Plex Mono', ui-monospace, monospace;
+
+  --shadow:    0 1px 2px rgba(60,52,30,.05), 0 2px 8px rgba(60,52,30,.04);
+  --shadow-prem: var(--shadow);
+  --shadow-hover: 0 2px 4px rgba(60,52,30,.07), 0 10px 22px rgba(60,52,30,.07);
+}
+
+/* Kill the AI-premium scaffolding */
+body::before { display: none !important; }
+body { background: var(--paper); color: var(--ink); }
+
+/* Headings: characterful serif, solid ink (no gradient clipping) */
+.display, .hero h1, .section-head h2, h1, h2, h3 {
+  background: none !important; -webkit-text-fill-color: currentColor !important; color: var(--ink); }
+.display, .hero h1 { font-family: var(--serif); font-weight: 600; letter-spacing: -0.015em; }
+.section-head h2 { font-family: var(--serif); font-weight: 600; letter-spacing: -0.01em;
+  font-size: clamp(27px, 3vw, 40px); }
+h3 { font-family: var(--serif); font-weight: 600; font-size: 20px; letter-spacing: -0.005em; }
+.note { font-family: var(--sans); color: var(--ink-2); }
+
+/* Labels & figures: precise mono, the instrument voice */
+.label, .eyebrow, .sb-nav .grp, .sb-run label, dl.stats dt,
+table.data thead th, .heat-legend, .count-line, .scene-caption, .chip {
+  font-family: var(--mono); }
+.label, .eyebrow, .sb-nav .grp, .sb-run label, dl.stats dt { letter-spacing: 0.06em; font-weight: 500; color: var(--ink-3); }
+table.data td.num, table.data .num, .heat-cell .v, .heat-cell .n { font-family: var(--mono); }
+code, .analysis code { font-family: var(--code); background: var(--paper); border: 1px solid var(--rule);
+  padding: 1px 6px; border-radius: 5px; font-size: .9em; }
+
+/* Surfaces: crisp, flat, warm — borders do the work, shadows stay quiet */
+.card, .table-scroll, .chat-shell, dl.stats > div {
+  border: 1px solid var(--rule); box-shadow: var(--shadow); border-radius: 8px; }
+.card:hover, dl.stats > div:hover { transform: none; box-shadow: var(--shadow-hover); border-color: var(--rule-2); }
+.card { background: var(--surface); }
+
+/* Chips & buttons: teal, crafted (gentle corners, not trendy pills) */
+.chip { border-radius: 7px; border: 1px solid var(--rule-2); background: var(--surface); color: var(--ink-2);
+  font-size: 11.5px; letter-spacing: 0.02em; font-weight: 500; transition: all .15s ease; }
+.chip:hover { background: var(--primary-soft); border-color: var(--accent); color: var(--accent-dim); transform: none; }
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; box-shadow: none; }
+.btn { border-radius: 7px; background: var(--accent); color: #fff; box-shadow: none; border: none;
+  font-family: var(--sans); font-weight: 600; }
+.btn:hover { background: var(--accent-dim); transform: none; box-shadow: none; }
+.btn.ghost { background: transparent; color: var(--ink-2); border: 1px solid var(--rule-2); }
+
+/* Sidebar: warm, light, crafted (NOT dark glass) */
+.sidebar { background: var(--paper-3); border-right: 1px solid var(--rule); box-shadow: none; }
+.sb-brand .name { color: var(--ink) !important; -webkit-text-fill-color: var(--ink); font-family: var(--serif); font-weight: 600; }
+.sb-brand .sub { color: var(--ink-3); font-family: var(--mono); }
+.sb-brand .glyph { border-color: var(--ink); }
+.sb-brand .glyph i { background: var(--accent); box-shadow: none; }
+.sb-run label, .sb-nav .grp { color: var(--ink-3); }
+.sb-run select { background: var(--surface); border: 1px solid var(--rule-2); color: var(--ink); border-radius: 7px; font-family: var(--mono); font-size: 12px; }
+.sb-run select:hover { border-color: var(--accent); }
+.sb-nav button { color: var(--ink-2); border-radius: 7px; }
+.sb-nav button .ic { color: var(--ink-3); font-family: var(--sans); }
+.sb-nav button small { color: var(--ink-3); }
+.sb-nav button:hover { background: var(--primary-soft); color: var(--accent-dim); }
+.sb-nav button.active { background: var(--primary-soft); color: var(--accent-dim); font-weight: 700;
+  box-shadow: inset 3px 0 0 var(--accent); }
+.sb-nav button.active .ic { color: var(--accent); }
+.sb-foot { color: var(--ink-3); border-top-color: var(--rule); font-family: var(--mono); }
+
+/* Hero: warm paper, matte network, ink type (no dark, no glow) */
+.hero-full { background:
+  radial-gradient(120% 120% at 82% 24%, rgba(14,110,98,.08), transparent 55%), var(--paper); color: var(--ink); }
+.hero h1, .hero .display { color: var(--ink); -webkit-text-fill-color: var(--ink); background: none; }
+.hero p { color: var(--ink-2); }
+.hero .eyebrow { color: var(--ink-3); font-family: var(--mono); }
+.hero .eyebrow .dot { background: var(--accent); box-shadow: none; }
+.hero-scrim { background:
+  linear-gradient(90deg, var(--paper) 0%, color-mix(in oklch, var(--paper), transparent 18%) 32%,
+    color-mix(in oklch, var(--paper), transparent 100%) 66%),
+  linear-gradient(0deg, var(--paper) 0%, transparent 24%); }
+.hero dl.stats > div { background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow);
+  backdrop-filter: none; -webkit-backdrop-filter: none; }
+.hero dl.stats > div:hover { border-color: var(--rule-2); box-shadow: var(--shadow-hover); }
+.hero dl.stats dt { color: var(--ink-3); }
+.hero dl.stats dd, dl.stats dd { color: var(--ink); -webkit-text-fill-color: var(--ink); background: none;
+  font-family: var(--serif); font-weight: 600; letter-spacing: -0.01em; }
+.hero dl.stats dd small, dl.stats dd small { color: var(--ink-3); -webkit-text-fill-color: var(--ink-3); font-family: var(--mono); }
+.scene-caption { color: var(--ink-3); font-family: var(--mono); }
+@media (max-width: 760px) {
+  .hero-scrim { background: linear-gradient(0deg, var(--paper) 6%, color-mix(in oklch, var(--paper), transparent 30%) 52%, color-mix(in oklch, var(--paper), transparent 46%) 100%); }
+}
+
+/* Tables: quiet header on paper, teal accents in data */
+table.data thead th { background: var(--paper-3); color: var(--ink-3); font-weight: 600; letter-spacing: 0.05em; }
+table.data tbody tr:hover { background: var(--paper-3); }
+
+/* Heat cells: flat tiles, square-ish, no neon */
+.heat-cell { border-radius: 6px; border: 3px solid var(--surface); }
+
+/* Keep motion, but calmer — no lift transforms */
+.stage > section.on { animation: viewIn .4s var(--ease) both; }
+@keyframes viewIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.card, dl.stats > div { animation: none; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </style>
 </head>
 <body>

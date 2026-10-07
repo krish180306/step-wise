@@ -34,17 +34,17 @@
   }
   // three.js r128's Color can't parse oklch(), so these are hex equivalents of
   // the page's --accent / --accent-up tokens (kept in sync by hand).
-  // Tuned to glow on the dark cinematic hero backdrop.
+  // Matte teal-on-paper: a calm instrument diagram, not a neon display.
   const COL = {
-    node:    new THREE.Color("#6E78F0"),      // resting unit (bright indigo)
-    lit:     new THREE.Color("#C7CCFF"),      // a unit the signal is passing through
-    answer:  new THREE.Color("#8E8CFF"),
-    follows: new THREE.Color("#A77BFF"),
-    ignores: new THREE.Color("#F2B64A"),
-    corrupt: new THREE.Color("#FF6B6B"),
-    edge:    new THREE.Color("#4A5496"),      // soft indigo lines on dark
-    edgeHot: new THREE.Color("#9AA4FF"),
-    signal:  new THREE.Color("#CDD2FF"),
+    node:    new THREE.Color("#1C7A6D"),      // resting unit (deep teal)
+    lit:     new THREE.Color("#41B0A0"),      // a unit the signal is passing through
+    answer:  new THREE.Color("#0E5A50"),
+    follows: new THREE.Color("#C0432A"),      // rust — the answer moved with the error
+    ignores: new THREE.Color("#B9892F"),
+    corrupt: new THREE.Color("#C0432A"),
+    edge:    new THREE.Color("#CFC8B6"),      // warm grey lines on paper
+    edgeHot: new THREE.Color("#1C7A6D"),
+    signal:  new THREE.Color("#1C7A6D"),
   };
 
   const scene = new THREE.Scene();
@@ -98,11 +98,12 @@
       const z = Math.sin(i * 1.7 + l) * 0.35;      // gentle depth
       mesh.position.set(x, y, z);
       group.add(mesh);
-      // A soft additive halo behind each node gives it bloom on the dark hero.
+      // A whisper-soft aura behind each node — just enough to give the matte
+      // diagram some depth on paper. Normal blending, low opacity (no glow).
       const halo = new THREE.Mesh(
-        new THREE.SphereGeometry(r * 2.6, 16, 16),
+        new THREE.SphereGeometry(r * 1.9, 16, 16),
         new THREE.MeshBasicMaterial({ color: base.clone(), transparent: true,
-          opacity: 0.16, blending: THREE.AdditiveBlending, depthWrite: false })
+          opacity: 0.08, depthWrite: false })
       );
       halo.position.copy(mesh.position);
       group.add(halo);
@@ -339,9 +340,9 @@
         if (nd.halo) {
           nd.halo.position.copy(nd.mesh.position);
           nd.halo.material.color.copy(nd.mat.color);
-          const glow = nd.isAnswer ? 0.22 : 0.14;
-          nd.halo.material.opacity = glow + Math.min(1, nd.lit) * 0.5;
-          nd.halo.scale.setScalar(1 + Math.min(1, nd.lit) * 0.6);
+          const glow = nd.isAnswer ? 0.12 : 0.07;
+          nd.halo.material.opacity = glow + Math.min(1, nd.lit) * 0.18;
+          nd.halo.scale.setScalar(1 + Math.min(1, nd.lit) * 0.4);
         }
       }
     }
