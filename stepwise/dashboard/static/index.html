@@ -767,7 +767,9 @@ code, .analysis code { font-family: var(--code); background: var(--paper); borde
 .sb-run select:hover { border-color: var(--accent); }
 .sb-nav button { color: var(--ink-2); border-radius: 7px; }
 .sb-nav button .ic { color: var(--ink-3); font-family: var(--sans); }
-.sb-nav button small { color: var(--ink-3); }
+/* Matches the earlier dark-sidebar rule's specificity so the active item's
+   subtitle is not left white-on-light. */
+.sb-nav button.active small, .sb-nav button small { color: var(--ink-3); }
 .sb-nav button:hover { background: var(--primary-soft); color: var(--accent-dim); }
 .sb-nav button.active { background: var(--primary-soft); color: var(--accent-dim); font-weight: 700;
   box-shadow: inset 3px 0 0 var(--accent); }
@@ -803,6 +805,18 @@ table.data tbody tr:hover { background: var(--paper-3); }
 
 /* Heat cells: flat tiles, square-ish, no neon */
 .heat-cell { border-radius: 6px; border: 3px solid var(--surface); }
+
+/* Explorer: the injected edit and the answer it moved are "the break" — rust,
+   not the pale indigo those rules carried for the old dark panel. */
+.trace li .now { color: var(--break); font-weight: 600; }
+.trace li.changed .mark { background: var(--break); }
+.trace-answer .v.moved { color: var(--break); }
+.ann-btn { font-family: var(--mono); border-radius: 6px; }
+.suggestions button, .chat-suggestions button { font-family: var(--mono); border-radius: 7px;
+  border: 1px solid var(--rule-2); background: var(--surface); color: var(--ink-2); }
+.suggestions button:hover, .chat-suggestions button:hover {
+  border-color: var(--accent); background: var(--primary-soft); color: var(--accent-dim); }
+.sim-switch:hover { background: var(--accent-dim); border-color: var(--accent-dim); }
 
 /* Keep motion, but calmer — no lift transforms */
 .stage > section.on { animation: viewIn .4s var(--ease) both; }
@@ -1401,17 +1415,26 @@ function renderFilters() {
 /* ===========================================================================
    Aggregate heatmap: models x perturbation classes
    =========================================================================== */
+//: The ramp's hue matches the teal accent, so the grid belongs to the palette.
+const HEAT_HUE = 182;
+
+function heatLightness(value) {
+  // Pale (near paper) at 0, deep teal at 1. Lightness carries the value, so the
+  // grid still reads when printed or in greyscale.
+  return 0.95 - 0.52 * value;
+}
+
 function heatColor(value) {
   if (value === null || value === undefined || Number.isNaN(value)) return "transparent";
-  // A single-hue ramp: pale paper at 0, full accent at 1. Lightness carries
-  // the value so the grid stays readable when printed or in greyscale.
-  const lightness = 0.94 - 0.56 * value;
-  const chroma = 0.03 + 0.13 * value;
-  return `oklch(${lightness.toFixed(3)} ${chroma.toFixed(3)} 258)`;
+  const chroma = 0.015 + 0.085 * value;
+  return `oklch(${heatLightness(value).toFixed(3)} ${chroma.toFixed(3)} ${HEAT_HUE})`;
 }
 
 function heatTextColor(value) {
-  return value !== null && value > 0.55 ? "oklch(0.97 0.01 258)" : "oklch(0.22 0.03 258)";
+  // Derived from the same lightness as the fill, so the label can never end up
+  // pale-on-pale the way a hand-picked threshold did.
+  if (value === null || value === undefined || Number.isNaN(value)) return "var(--ink-2)";
+  return heatLightness(value) < 0.58 ? "oklch(0.97 0.012 182)" : "oklch(0.27 0.04 182)";
 }
 
 function renderHeatmap() {
@@ -1536,19 +1559,26 @@ async function renderMech() {
   }
   // Two big numbers plus a per-step bar chart of mean log-prob drop.
   const steps = d.by_step || [];
-  const maxAbs = Math.max(0.01, ...steps.map((s) => Math.abs(s.mean_drop || 0)));
-  const W = 560, barH = 26, padL = 72, padR = 60, padT = 6;
+  // Size the axis from the data: give the negative side exactly the room it
+  // needs so bars never run back over the step labels, and park every value in
+  // a fixed right-hand column so it can't collide with a bar either.
+  const vals = steps.map((s) => s.mean_drop || 0);
+  const maxPos = Math.max(0, ...vals);
+  const maxNeg = Math.max(0, ...vals.map((v) => -v));
+  const span = Math.max(0.01, maxPos + maxNeg);
+  const W = 560, barH = 26, padL = 76, padR = 64, padT = 6;
   const Hc = padT + steps.length * (barH + 6);
-  const zero = padL + (W - padL - padR) * 0.08;
-  const scale = (W - padL - padR - (zero - padL)) / maxAbs;
+  const scale = (W - padL - padR) / span;
+  const zero = padL + maxNeg * scale;
   const bars = steps.map((s, i) => {
     const y = padT + i * (barH + 6);
-    const w = (s.mean_drop || 0) * scale;
+    const v = s.mean_drop || 0;
+    const w = v * scale;
     const isAns = i === steps.length - 1;
-    const col = isAns ? "var(--follows)" : "var(--accent)";
+    const col = isAns ? "var(--break)" : "var(--accent)";
     return `<text x="4" y="${y + barH / 2}" dominant-baseline="middle" class="dom-label">step ${s.step}${isAns ? " (ans)" : ""}</text>` +
-      `<rect x="${w >= 0 ? zero : zero + w}" y="${y}" width="${Math.abs(w)}" height="${barH - 6}" fill="${col}" opacity="0.85"/>` +
-      `<text x="${zero + Math.max(w, 0) + 6}" y="${y + barH / 2}" dominant-baseline="middle" class="dom-val">${(s.mean_drop >= 0 ? "+" : "")}${(s.mean_drop || 0).toFixed(2)}</text>`;
+      `<rect x="${w >= 0 ? zero : zero + w}" y="${y}" width="${Math.abs(w)}" height="${barH - 6}" rx="3" fill="${col}" opacity="0.9"/>` +
+      `<text x="${W - padR + 10}" y="${y + barH / 2}" dominant-baseline="middle" class="dom-val">${(v >= 0 ? "+" : "")}${v.toFixed(2)}</text>`;
   }).join("");
   host.innerHTML =
     `<div style="display:flex; gap:28px; flex-wrap:wrap; margin-bottom:16px; font-family:var(--mono);">
@@ -1557,7 +1587,7 @@ async function renderMech() {
        <div style="align-self:center;"><div class="label on-panel">model</div><div class="mono" style="font-size:12px; color:var(--on-panel-2);">${esc(d.model)}</div></div>
      </div>` +
     `<svg viewBox="0 0 ${W} ${Hc + 6}" style="max-width:100%; height:auto;" role="img" aria-label="Mean log-probability drop per step"><line x1="${zero}" x2="${zero}" y1="${padT}" y2="${Hc}" class="dom-tick"/>${bars}</svg>` +
-    `<p class="note on-panel" style="margin-top:10px;">A larger drop means corrupting that step hurt the answer's probability more — the answer step (purple) dwarfs the reasoning steps, the tautology seen from inside the model.</p>`;
+    `<p class="note on-panel" style="margin-top:10px;">A larger drop means corrupting that step hurt the answer's probability more — the answer step (in rust) dwarfs the reasoning steps — the tautology seen from inside the model.</p>`;
 }
 
 async function renderRegression() {
@@ -1940,7 +1970,7 @@ async function renderRecords() {
         ? `<span class="pill" style="color:${LABEL_COLOR[r.label]}"><i style="background:${LABEL_COLOR[r.label]}"></i>${esc(r.label)}</span>`
         : `<span class="pill" style="color:var(--on-panel-4)">unscored</span>`}</td>
       <td class="num">${esc(r.original_answer)}</td>
-      <td class="num" style="color:${r.label === "follows" ? "oklch(0.88 0.09 258)" : "inherit"}">${esc(r.perturbed_answer)}</td>
+      <td class="num" style="color:${r.label === "follows" ? "var(--break)" : "inherit"}">${esc(r.perturbed_answer)}</td>
       <td class="num">${esc(r.gold_answer)}</td>
       <td class="num" style="opacity:.6">${esc(r.perturbation_method)}</td>
     </tr>`).join("")}</tbody>`;
@@ -2356,6 +2386,8 @@ boot();
 <!-- 3D hero: loaded after the app so the page is usable even if the CDN is
      slow or blocked; the scene is progressive enhancement, never required. -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="/static/scene.js" defer></script>
+<!-- v= is bumped whenever scene.js changes, so a browser holding an old copy
+     refetches it instead of rendering last release's colours. -->
+<script src="/static/scene.js?v=3" defer></script>
 </body>
 </html>
