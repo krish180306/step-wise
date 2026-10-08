@@ -374,24 +374,37 @@
   }
 
   function fitCamera() {
-    const aspect = W() / H();
+    // Measure the host directly rather than through W()/H(): those fall back to
+    // a default when the hero is hidden, and sizing the renderer to that default
+    // is what used to leave the canvas stranded at 900x560 inside a wide hero.
+    const w = host.clientWidth, h = host.clientHeight;
+    if (!w || !h) return;            // still hidden — the observer calls us again
+    const aspect = w / h;
     camera.aspect = aspect;
     const vHalf = Math.tan((FOV * Math.PI) / 180 / 2);
-    // Centre the camera left of the network's centre so the net sits in the
-    // right ~60% of the frame (clear of the overlaid copy on the left). On
-    // narrow screens the copy stacks above, so recentre to show the whole net.
-    const narrow = W() < 760;
-    const cx = narrow ? 0 : -2.2;
+    const narrow = w < 760;
     const halfH = 3.7, halfW = narrow ? 8.4 : 10.4;   // world extents + margin
-    const dH = halfH / vHalf;
-    const dW = halfW / (vHalf * aspect);
-    camera.position.set(cx, 0.2, Math.max(dH, dW));
+    const d = Math.max(halfH / vHalf, halfW / (vHalf * aspect));
+    // Anchor the network's right edge just inside the frame so a wide viewport
+    // cannot leave dead space beside it; on a narrow screen the copy stacks
+    // above, so centre the whole net instead.
+    const halfVisW = d * vHalf * aspect;
+    const cx = narrow ? 0 : Math.min(0, X_SPAN / 2 + 0.9 - halfVisW);
+    camera.position.set(cx, 0.2, d);
     camera.lookAt(cx, 0.1, 0);
     camera.updateProjectionMatrix();
-    renderer.setSize(W(), H());
+    renderer.setSize(w, h);
   }
   fitCamera();
   addEventListener("resize", fitCamera);
+  // The hero is hidden when this script runs (views are revealed after the run
+  // loads), so the first fit is a no-op. A ResizeObserver covers later reflows,
+  // but it is not reliable for the display:none -> visible transition, so the
+  // page also calls stepwiseScene.resize() whenever it reveals a view.
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(() => fitCamera()).observe(host);
+  }
+  window.stepwiseScene.resize = fitCamera;
 
   if (reduced) {
     // Reduced motion: one clean still frame, no loop, no corruption.

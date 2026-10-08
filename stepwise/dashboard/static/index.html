@@ -1224,6 +1224,9 @@ function showView(id) {
     b.classList.toggle("active", b.dataset.view === id));
   state.view = id;
   window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+  // The hero canvas cannot measure itself while its section is display:none, so
+  // tell it to re-fit now that this view is on screen.
+  if (window.stepwiseScene && window.stepwiseScene.resize) window.stepwiseScene.resize();
 }
 
 /* ===========================================================================
@@ -2388,6 +2391,6 @@ boot();
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <!-- v= is bumped whenever scene.js changes, so a browser holding an old copy
      refetches it instead of rendering last release's colours. -->
-<script src="/static/scene.js?v=3" defer></script>
+<script src="/static/scene.js?v=5" defer></script>
 </body>
 </html>
