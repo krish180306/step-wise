@@ -31,8 +31,9 @@ from pathlib import Path
 import pandas as pd
 
 from . import stats
-from .config import LABELS, PERTURBATION_TYPES
+from .config import ABLATION_TYPES, LABELS, PERTURBATION_TYPES
 from .domains import domain_for
+from .leakage import answer_overwritten, step_states_answer
 from .pipeline import CORRECTS, FOLLOWS, IGNORES, load_records
 
 #: Columns every aggregate carries, so downstream consumers can rely on them.
@@ -80,6 +81,11 @@ def records_dataframe(records) -> pd.DataFrame:
         # "reasoning steps only" figure beside the all-steps one.
         if "is_answer_step" not in frame:
             frame["is_answer_step"] = frame["step_idx"] >= frame["n_steps"]
+    # The sharper, content-based tautology flags. Derived here rather than
+    # trusted blindly, so a results file written before these fields existed
+    # gets the same analysis as a fresh one — every input they need is already
+    # stored per record, so this costs no API calls.
+    frame = add_tautology_flags(frame)
     # Derived for older result files that predate these fields; harmless when
     # the pipeline already wrote them.
     if "domain" not in frame and "dataset" in frame:
@@ -98,18 +104,206 @@ def records_dataframe(records) -> pd.DataFrame:
     return frame
 
 
+def add_tautology_flags(frame: pd.DataFrame) -> pd.DataFrame:
+    """Add ``states_answer``, ``answer_overwritten`` and ``tautological``.
+
+    ``tautological`` is the column every "reasoning steps only" figure filters
+    on. It prefers the content-based test from :mod:`stepwise.leakage` — did
+    this corruption remove an answer the step was displaying? — and falls back
+    to the positional ``is_answer_step`` proxy **per row**, only where the
+    record does not carry the texts needed to decide it.
+
+    That per-row fallback is what keeps this backwards compatible. A full
+    results file gets the sharp filter; a hand-built fixture or a truncated
+    export that stored no step text keeps exactly the behaviour it had before
+    this function existed. :func:`tautology_report` measures the difference
+    the upgrade makes on a given run.
+    """
+    if frame.empty:
+        return frame
+    frame = frame.copy()
+    has_texts = {"original_step", "perturbed_step", "original_answer"} <= set(frame.columns)
+    if not has_texts:
+        for column in ("states_answer", "answer_overwritten"):
+            if column not in frame:
+                frame[column] = False
+        frame["tautology_decidable"] = False
+        frame["tautological"] = (
+            frame["is_answer_step"].astype(bool) if "is_answer_step" in frame else False
+        )
+        return frame
+
+    def _txt(row, key):
+        value = row.get(key)
+        return "" if value is None or pd.isna(value) else str(value)
+
+    states, overwritten, decidable = [], [], []
+    for row in frame.to_dict(orient="records"):
+        original = _txt(row, "original_step")
+        perturbed = _txt(row, "perturbed_step")
+        answer = _txt(row, "original_answer")
+        atype = _txt(row, "answer_type") or "span"
+        choices = row.get("choices") if isinstance(row.get("choices"), list) else None
+        # Undecidable without the original step text and a baseline answer to
+        # look for; a missing perturbed step means the cell never ran.
+        ok = bool(original.strip() and answer.strip() and perturbed.strip())
+        decidable.append(ok)
+        if not ok:
+            states.append(bool(row.get("states_answer", False)))
+            overwritten.append(bool(row.get("answer_overwritten", False)))
+            continue
+        states.append(step_states_answer(original, answer, atype, choices))
+        overwritten.append(answer_overwritten(original, perturbed, answer, atype, choices))
+
+    frame["states_answer"] = states
+    frame["answer_overwritten"] = overwritten
+    frame["tautology_decidable"] = decidable
+    if "is_answer_step" in frame:
+        positional = frame["is_answer_step"].astype(bool).tolist()
+    else:
+        positional = [False] * len(frame)
+    frame["tautological"] = [
+        o if d else p for o, d, p in zip(overwritten, decidable, positional)
+    ]
+    return frame
+
+
+def _corruption_only(scored: pd.DataFrame) -> pd.DataFrame:
+    """Drop ablation cells from a table that means "followed an injected error".
+
+    ``follows`` is not one label with one meaning. Under a corruption it means
+    the model carried an injected error through to its answer. Under an
+    ablation (:data:`stepwise.config.ABLATION_TYPES`) it means the step was
+    *necessary* — the answer could not be reached without it. Averaging the
+    two would make ``dependency`` a mixture of two different claims, so the
+    corruption tables exclude the ablation arm and
+    :func:`necessity_report` reads it on its own terms.
+
+    A run without ablation cells — which is every run before this existed, and
+    every default run now — is untouched by this.
+    """
+    if "perturbation_type" not in scored:
+        return scored
+    return scored[~scored["perturbation_type"].isin(ABLATION_TYPES)]
+
+
+def _reasoning_only(scored: pd.DataFrame) -> pd.DataFrame:
+    """Drop the tautological cells — the single definition, used everywhere.
+
+    Every caller used to inline ``scored[~scored["is_answer_step"]]``. Routing
+    them through one function means the tautology definition can be sharpened
+    (as it has been) in one place instead of six.
+    """
+    if "tautological" in scored:
+        return scored[~scored["tautological"].astype(bool)]
+    if "is_answer_step" in scored:
+        return scored[~scored["is_answer_step"].astype(bool)]
+    return scored
+
+
+def tautology_report(records) -> dict:
+    """How much of the headline number was the answer-restating tautology.
+
+    The positional proxy (``is_answer_step``: the final step) and the
+    content-based test (``answer_overwritten``: the corruption removed an
+    answer the step was displaying) disagree in both directions, and the
+    disagreement is itself a result:
+
+    ``leaks_outside_final_step``
+        Cells where a *non-final* step stated the answer and the corruption
+        took it away. Tautological, and the positional filter counted every
+        one of them as reasoning — this is the headline's inflation.
+    ``final_steps_without_leak``
+        Final-step cells that did **not** overwrite an answer, including every
+        noise insertion into an answer-stating step. Real evidence that the
+        positional filter was discarding.
+
+    ``dependency`` is reported four ways over the same cells — all steps, the
+    positional filter, the content filter, and tautological cells only — so
+    the gap between them can be read off rather than asserted.
+    """
+    frame = records if isinstance(records, pd.DataFrame) else records_dataframe(records)
+    empty = {
+        "n_scored": 0, "n_decidable": 0, "dependency_all_steps": None,
+        "dependency_positional_filter": None, "dependency_content_filter": None,
+        "dependency_tautological_cells": None, "inflation": None,
+        "leaks_outside_final_step": 0, "final_steps_without_leak": 0,
+        "n_tautological": 0, "n_states_answer": 0, "per_model": [],
+    }
+    if frame.empty or "label" not in frame:
+        return empty
+    scored = _corruption_only(frame[frame["scored"]] if "scored" in frame else frame)
+    if scored.empty:
+        return empty
+
+    def _dep(sub):
+        return round(float((sub["label"] == FOLLOWS).mean()), 4) if len(sub) else None
+
+    def _flag(name):
+        if name in scored:
+            return scored[name].astype(bool)
+        return pd.Series(False, index=scored.index)
+
+    positional = _flag("is_answer_step")
+    content = _flag("tautological")
+    decidable = _flag("tautology_decidable")
+
+    all_dep = _dep(scored)
+    content_dep = _dep(scored[~content])
+    out = {
+        "n_scored": int(len(scored)),
+        "n_decidable": int(decidable.sum()),
+        "dependency_all_steps": all_dep,
+        "dependency_positional_filter": _dep(scored[~positional]),
+        "dependency_content_filter": content_dep,
+        "dependency_tautological_cells": _dep(scored[content]),
+        # How much of the all-steps dependency was tautology.
+        "inflation": (
+            round(all_dep - content_dep, 4)
+            if all_dep is not None and content_dep is not None else None
+        ),
+        "leaks_outside_final_step": int((content & ~positional).sum()),
+        "final_steps_without_leak": int((positional & ~content & decidable).sum()),
+        "n_tautological": int(content.sum()),
+        "n_states_answer": int(_flag("states_answer").sum()),
+    }
+    per_model = []
+    for model, group in scored.groupby("model_name", observed=True):
+        gcontent = (group["tautological"].astype(bool) if "tautological" in group
+                    else pd.Series(False, index=group.index))
+        gpos = (group["is_answer_step"].astype(bool) if "is_answer_step" in group
+                else pd.Series(False, index=group.index))
+        per_model.append({
+            "model_name": model,
+            "n": int(len(group)),
+            "dependency_all_steps": _dep(group),
+            "dependency_positional_filter": _dep(group[~gpos]),
+            "dependency_content_filter": _dep(group[~gcontent]),
+            "leaks_outside_final_step": int((gcontent & ~gpos).sum()),
+        })
+    out["per_model"] = sorted(per_model, key=lambda r: r["model_name"])
+    return out
+
+
 def _aggregate(
-    frame: pd.DataFrame, by: list[str], *, reasoning_steps_only: bool = False
+    frame: pd.DataFrame, by: list[str], *, reasoning_steps_only: bool = False,
+    include_ablation: bool = False,
 ) -> pd.DataFrame:
     """Count labels and derive the rates, grouped by ``by``.
 
-    With ``reasoning_steps_only`` the answer-bearing final step is dropped, so
-    the figure reflects the reasoning rather than the step that merely restates
-    the result.
+    With ``reasoning_steps_only`` the tautological cells are dropped, so the
+    figure reflects the reasoning rather than a step that merely restates the
+    result (see :func:`add_tautology_flags`).
+
+    Ablation cells are excluded unless ``include_ablation``, because a
+    ``follows`` there means "necessary", not "followed an error" — see
+    :func:`_corruption_only`.
     """
     scored = frame[frame["scored"]] if "scored" in frame else frame
-    if reasoning_steps_only and "is_answer_step" in scored:
-        scored = scored[~scored["is_answer_step"]]
+    if not include_ablation:
+        scored = _corruption_only(scored)
+    if reasoning_steps_only:
+        scored = _reasoning_only(scored)
     if scored.empty:
         return pd.DataFrame(columns=by + SCORE_COLUMNS)
 
@@ -209,9 +403,9 @@ def bootstrap_scores(
     by = by or ["model_name", "domain"]
     if frame.empty or any(c not in frame for c in by):
         return pd.DataFrame(columns=by + ["n", "faithfulness", "ci_low", "ci_high", "chance"])
-    scored = frame[frame["scored"]]
-    if reasoning_steps_only and "is_answer_step" in scored:
-        scored = scored[~scored["is_answer_step"]]
+    scored = _corruption_only(frame[frame["scored"]])
+    if reasoning_steps_only:
+        scored = _reasoning_only(scored)
     rows = []
     for key, group in scored.groupby(by, dropna=False, observed=True):
         point, lo, hi = stats.ratio_bootstrap_ci(group, resamples=resamples, seed=seed)
@@ -265,9 +459,9 @@ def cross_model_transfer(records, *, reasoning_steps_only: bool = True) -> pd.Da
     frame = records if isinstance(records, pd.DataFrame) else records_dataframe(records)
     if frame.empty or "model_name" not in frame:
         return pd.DataFrame()
-    scored = frame[frame["scored"]] if "scored" in frame else frame
-    if reasoning_steps_only and "is_answer_step" in scored:
-        scored = scored[~scored["is_answer_step"]]
+    scored = _corruption_only(frame[frame["scored"]] if "scored" in frame else frame)
+    if reasoning_steps_only:
+        scored = _reasoning_only(scored)
     if scored.empty or scored["model_name"].nunique() < 2:
         return pd.DataFrame()
     scored = scored.copy()
@@ -315,9 +509,9 @@ def severity_curve(records, *, reasoning_steps_only: bool = True) -> pd.DataFram
     frame = records if isinstance(records, pd.DataFrame) else records_dataframe(records)
     if frame.empty or "severity" not in frame:
         return pd.DataFrame()
-    scored = frame[frame["scored"]] if "scored" in frame else frame
-    if reasoning_steps_only and "is_answer_step" in scored:
-        scored = scored[~scored["is_answer_step"]]
+    scored = _corruption_only(frame[frame["scored"]] if "scored" in frame else frame)
+    if reasoning_steps_only:
+        scored = _reasoning_only(scored)
     if scored.empty or scored["severity"].nunique() < 1:
         return pd.DataFrame()
     scored = scored.copy()
@@ -390,9 +584,9 @@ def multiplicity_report(records, *, reasoning_steps_only: bool = True) -> dict:
     frame = records if isinstance(records, pd.DataFrame) else records_dataframe(records)
     if frame.empty:
         return {"rows": [], "n_tests": 0, "n_significant": 0, "alpha": 0.05}
-    scored = frame[frame["scored"]] if "scored" in frame else frame
-    if reasoning_steps_only and "is_answer_step" in scored:
-        scored = scored[~scored["is_answer_step"]]
+    scored = _corruption_only(frame[frame["scored"]] if "scored" in frame else frame)
+    if reasoning_steps_only:
+        scored = _reasoning_only(scored)
     rows = []
     for model, g in scored.groupby("model_name", observed=True):
         ctrl = g[g["perturbation_type"] == "irrelevant_noise"]
@@ -489,9 +683,8 @@ def domain_leaderboard(records) -> dict:
         return best
 
     # Reasoning-only cells, for the significance test on the faithfulness winner.
-    rcells = frame[frame["scored"]] if "scored" in frame else frame
-    if "is_answer_step" in rcells:
-        rcells = rcells[~rcells["is_answer_step"]]
+    rcells = _corruption_only(frame[frame["scored"]] if "scored" in frame else frame)
+    rcells = _reasoning_only(rcells)
 
     winners = {}
     for d in domains:
@@ -521,16 +714,121 @@ def domain_leaderboard(records) -> dict:
             "winners": winners, "model_best": model_best}
 
 
+def necessity_report(records) -> dict:
+    """The ablation arm: which steps the answer actually *needed*.
+
+    Every corruption class injects an error, which confounds two things that
+    look identical in the label: the reasoning was load-bearing, and the model
+    noticed the error and routed around it (:mod:`stepwise.introspect` shows
+    models sometimes do notice). Deleting a step injects nothing to notice, so
+    the label means one thing only:
+
+    ``necessary``
+        The answer moved when the step was removed — it could not be reached
+        without that step.
+    ``redundant``
+        The answer did not move. The step was decoration, at least as far as
+        the conclusion is concerned.
+
+    The cross-tab is the payoff. A step that is **necessary but not corrupted
+    into error** is one the model needs yet does not blindly trust — the best
+    case, and invisible to corruption alone. A step that is **redundant yet
+    followed** means the model's answer tracked an edit to a step it did not
+    even need, which is surface reactivity rather than reasoning.
+
+    Returns empty when the run has no ablation cells, which is every run that
+    did not opt into ``--perturbations ...,step_deletion``.
+    """
+    frame = records if isinstance(records, pd.DataFrame) else records_dataframe(records)
+    empty = {"per_model": [], "cross_tab": {}, "n_ablation_cells": 0,
+             "n_paired": 0, "necessity_rate": None, "redundant_rate": None}
+    if frame.empty or "perturbation_type" not in frame:
+        return empty
+    scored = frame[frame["scored"]] if "scored" in frame else frame
+    ablation = scored[scored["perturbation_type"].isin(ABLATION_TYPES)]
+    if ablation.empty:
+        return empty
+
+    necessary = ablation["label"] == FOLLOWS
+    # Deleting the step that states the answer removes the answer from the
+    # trace, so of course the re-run has to recompute: the same tautology the
+    # corruption arm has to exclude. Reported both ways, like every other
+    # metric here, with the reasoning-only figure as the honest one.
+    reasoning = _reasoning_only(ablation)
+    out = {
+        "n_ablation_cells": int(len(ablation)),
+        "necessity_rate": round(float(necessary.mean()), 4),
+        "redundant_rate": round(float((~necessary).mean()), 4),
+        "n_reasoning_cells": int(len(reasoning)),
+        "necessity_rate_reasoning": (
+            round(float((reasoning["label"] == FOLLOWS).mean()), 4)
+            if len(reasoning) else None
+        ),
+        "per_model": [],
+    }
+    for model, group in ablation.groupby("model_name", observed=True):
+        need = group["label"] == FOLLOWS
+        out["per_model"].append({
+            "model_name": model,
+            "n": int(len(group)),
+            "necessary": int(need.sum()),
+            "redundant": int((~need).sum()),
+            "necessity_rate": round(float(need.mean()), 4),
+        })
+    out["per_model"].sort(key=lambda r: r["model_name"])
+
+    # Pair each ablated cell with the corruption cells on the same step, so
+    # "needed" and "followed an error" can be compared on identical steps.
+    corruption = _corruption_only(scored)
+    if corruption.empty:
+        return out
+    key = ["question_id", "model_name", "step_idx"]
+    need_by = (
+        ablation.assign(_need=necessary.astype(int))
+        .groupby(key, observed=True)["_need"].max()
+    )
+    follow_by = (
+        corruption.assign(_f=(corruption["label"] == FOLLOWS).astype(int))
+        .groupby(key, observed=True)["_f"].max()
+    )
+    joined = pd.concat([need_by.rename("needed"), follow_by.rename("followed")],
+                       axis=1, join="inner").dropna()
+    out["n_paired"] = int(len(joined))
+    if not joined.empty:
+        out["cross_tab"] = {
+            "necessary_and_followed": int(((joined["needed"] == 1) & (joined["followed"] == 1)).sum()),
+            # Needed, but an error in it did not drag the answer along: the
+            # model depends on the step without blindly trusting it.
+            "necessary_not_followed": int(((joined["needed"] == 1) & (joined["followed"] == 0)).sum()),
+            # Not needed, yet the answer moved when it was corrupted: the
+            # answer tracked a step the conclusion does not rest on.
+            "redundant_but_followed": int(((joined["needed"] == 0) & (joined["followed"] == 1)).sum()),
+            "redundant_and_ignored": int(((joined["needed"] == 0) & (joined["followed"] == 0)).sum()),
+        }
+        agree = (joined["needed"] == joined["followed"]).mean()
+        out["cross_tab"]["agreement"] = round(float(agree), 4)
+    return out
+
+
 def by_dataset(records) -> pd.DataFrame:
     """Per-dataset breakdown, per model."""
     frame = records if isinstance(records, pd.DataFrame) else records_dataframe(records)
     return _aggregate(frame, ["model_name", "dataset"]) if not frame.empty else pd.DataFrame()
 
 
-def by_perturbation(records) -> pd.DataFrame:
-    """Per-class breakdown, per model — what the heatmap is built from."""
+def by_perturbation(records, *, include_ablation: bool = False) -> pd.DataFrame:
+    """Per-class breakdown, per model — what the heatmap is built from.
+
+    This is the one table where ``include_ablation=True`` is safe to ask for:
+    the rows are already split by class, so an ablation row sits beside the
+    corruption rows without being averaged into them. Off by default, because
+    the heatmap's colour scale reads as one metric.
+    """
     frame = records if isinstance(records, pd.DataFrame) else records_dataframe(records)
-    return _aggregate(frame, ["model_name", "perturbation_type"]) if not frame.empty else pd.DataFrame()
+    if frame.empty:
+        return pd.DataFrame()
+    return _aggregate(frame, ["model_name", "perturbation_type"],
+                      include_ablation=include_ablation)
 
 
 def heatmap(records, metric: str = "faithfulness") -> pd.DataFrame:
@@ -625,6 +923,11 @@ def summary(records) -> dict:
         "severity_curve": severity_curve(frame).to_dict(orient="records"),
         "capability": capability_vs_faithfulness(frame),
         "multiplicity": multiplicity_report(frame),
+        # How much of the headline was the answer-restating tautology, by the
+        # content-based test rather than the positional proxy.
+        "tautology": tautology_report(frame),
+        # The ablation arm, empty unless the run opted into step_deletion.
+        "necessity": necessity_report(frame),
         # The headline both ways: all steps, and reasoning steps only (the
         # answer-bearing final step removed). The gap between them is itself
         # a result — it is how much of "dependency" was just the tautology.

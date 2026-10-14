@@ -152,6 +152,15 @@ PERTURBATION_TYPES = (
     "irrelevant_noise",
 )
 
+#: The ablation arm: remove the step instead of corrupting it. Opt-in via
+#: ``--perturbations ...,step_deletion``, and kept out of the default grid so
+#: a default run's cost and contents are exactly what they always were. See
+#: :data:`stepwise.perturbations.ABLATION_TYPES` for why it is scored apart.
+ABLATION_TYPES = ("step_deletion",)
+
+#: Everything ``--perturbations`` accepts.
+ALL_INTERVENTION_TYPES = PERTURBATION_TYPES + ABLATION_TYPES
+
 LABELS = ("follows", "ignores", "corrects")
 
 DATASETS = ("gsm8k", "svamp", "aqua", "strategyqa", "hotpotqa",

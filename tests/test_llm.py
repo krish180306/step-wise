@@ -222,12 +222,18 @@ def test_explicit_key_overrides_env_in_make_client(monkeypatch):
         def __init__(self, api_key=None):
             captured["key"] = api_key
 
-    monkeypatch.setattr("groq.Groq", _FakeGroq, raising=False)
-    import sys, types
+    # Install the stand-in module FIRST. monkeypatch.setattr resolves the
+    # dotted path by importing it, so with the real groq package absent the
+    # patch itself raises ModuleNotFoundError before the fallback below could
+    # ever run. The suite is meant to pass with no provider SDK installed.
+    import sys
+    import types
+
     if "groq" not in sys.modules:
-        mod = types.ModuleType("groq")
-        mod.Groq = _FakeGroq
-        sys.modules["groq"] = mod
+        module = types.ModuleType("groq")
+        module.Groq = _FakeGroq
+        monkeypatch.setitem(sys.modules, "groq", module)
+    monkeypatch.setattr("groq.Groq", _FakeGroq, raising=False)
     provider = GroqProvider(api_key="explicit-key")
     _ = provider.client
     assert captured["key"] == "explicit-key"

@@ -116,6 +116,55 @@ def build_server():
         return json.dumps(out, indent=2, default=str)
 
     @server.tool()
+    def interaction_check(run: str = DEFAULT_RUN) -> str:
+        """Pair interventions: redundancy a single-step probe cannot see.
+
+        'synergistic' pairs moved the answer although neither step moved it
+        alone - two routes to the same answer, which the single-step arm
+        records as 'ignores' twice and reads as inert reasoning.
+        """
+        from .agent.tools import tool_interaction_check
+
+        return json.dumps(tool_interaction_check(_ctx(run)), indent=2, default=str)
+
+    @server.tool()
+    def tautology_check(run: str = DEFAULT_RUN) -> str:
+        """How much of the run's dependency was the answer being restated.
+
+        Sharper than ``answer_step_gap``, which drops whichever step came
+        last. This drops only the cells where the corruption actually removed
+        an answer the step was displaying, wherever that step sat in the
+        chain. Report ``dependency_content_filter`` as the headline.
+        """
+        from .agent.tools import tool_tautology_check
+
+        return json.dumps(tool_tautology_check(_ctx(run)), indent=2, default=str)
+
+    @server.tool()
+    def necessity_check(run: str = DEFAULT_RUN) -> str:
+        """The ablation arm: which steps the answer actually needed.
+
+        In these cells the step was deleted, not corrupted, so "follows"
+        means the step was necessary. Empty unless the run included
+        ``step_deletion``.
+        """
+        from .agent.tools import tool_necessity_check
+
+        return json.dumps(tool_necessity_check(_ctx(run)), indent=2, default=str)
+
+    @server.tool()
+    def power_check(run: str = DEFAULT_RUN, p1: float = 0.40, p2: float = 0.25) -> str:
+        """How many questions this design needs, and what precision it has now.
+
+        Reads cells-per-question and the intra-cluster correlation off the run
+        itself, so the sizing accounts for cells that share a chain of thought
+        rather than assuming independent observations.
+        """
+        from .agent.tools import tool_power_check
+
+        return json.dumps(tool_power_check(_ctx(run), p1=p1, p2=p2), indent=2, default=str)
+
+    @server.tool()
     def get_example(run: str, question_id: str, model_name: str, step_idx: int,
                     perturbation_type: str) -> str:
         """The full drill-down for one cell: both traces and the label."""

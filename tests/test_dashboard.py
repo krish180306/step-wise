@@ -318,3 +318,301 @@ def test_a_bad_label_is_rejected(client, tmp_path, monkeypatch):
     monkeypatch.setattr(dashboard_app, "RESULTS_DIR", tmp_path)
     r = client.post("/api/annotate", json={"run": "demo", "key": "k|m|1|x", "label": "banana"})
     assert r.status_code == 400
+
+
+# --------------------------------------------------------------------------
+# The analyses added on top of the original probe
+# --------------------------------------------------------------------------
+
+
+def test_tautology_endpoint_reports_both_filters(client):
+    payload = client.get("/api/tautology?run=demo").json()
+    assert payload["n_scored"] > 0
+    # Both proxies are reported, so the gap between them is readable.
+    assert payload["dependency_positional_filter"] is not None
+    assert payload["dependency_content_filter"] is not None
+    assert payload["per_model"]
+
+
+def test_tautology_endpoint_finds_the_disagreements(client):
+    payload = client.get("/api/tautology?run=demo").json()
+    # The demo chains state their answer in a step that is not always last,
+    # so the two proxies must disagree somewhere.
+    assert (payload["leaks_outside_final_step"]
+            + payload["final_steps_without_leak"]) > 0
+
+
+def test_necessity_endpoint_reads_the_ablation_arm(client):
+    # The demo includes step_deletion cells, so this panel has data offline.
+    payload = client.get("/api/necessity?run=demo").json()
+    assert payload["n_ablation_cells"] > 0
+    assert payload["per_model"]
+    assert payload["cross_tab"]
+
+
+def test_necessity_endpoint_is_empty_without_the_ablation_arm(client, tmp_path):
+    import json
+
+    from stepwise.config import ABLATION_TYPES
+
+    path = tmp_path / "demo.jsonl"
+    rows = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    kept = [r for r in rows if r.get("perturbation_type") not in ABLATION_TYPES]
+    (tmp_path / "noabl.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in kept) + "\n", encoding="utf-8")
+    assert client.get("/api/necessity?run=noabl").json()["n_ablation_cells"] == 0
+
+
+def test_power_endpoint_measures_the_design(client):
+    payload = client.get("/api/power?run=demo").json()
+    assert payload["measured"]["questions"] == 2
+    assert payload["target"]["questions"] > 0
+    assert payload["current_precision"]["half_width"] is not None
+
+
+def test_power_endpoint_takes_the_effect_size(client):
+    tight = client.get("/api/power?run=demo&p1=0.30&p2=0.25").json()
+    loose = client.get("/api/power?run=demo&p1=0.60&p2=0.25").json()
+    assert tight["target"]["questions"] > loose["target"]["questions"]
+
+
+def test_power_endpoint_rejects_an_untabulated_level(client):
+    # power_plan raises ValueError, which the route turns into a 400 rather
+    # than a 500 traceback.
+    import stepwise.stats as stats
+
+    original = stats.power_plan
+    try:
+        stats.power_plan = lambda *a, **k: (_ for _ in ()).throw(ValueError("alpha=0.037"))
+        assert client.get("/api/power?run=demo").status_code == 400
+    finally:
+        stats.power_plan = original
+
+
+def test_runs_endpoint_lists_the_ablation_class(client):
+    types = client.get("/api/runs").json()["perturbation_types"]
+    assert "step_deletion" in types
+
+
+def test_summary_carries_the_new_blocks(client):
+    payload = client.get("/api/summary?run=demo").json()
+    assert "tautology" in payload
+    assert "necessity" in payload
+
+
+def test_the_new_endpoints_404_on_an_unknown_run(client):
+    for endpoint in ("tautology", "necessity", "power"):
+        assert client.get(f"/api/{endpoint}?run=nope").status_code == 404
+
+
+# --------------------------------------------------------------------------
+# The sizing panel's markup and the contract its renderer depends on
+# --------------------------------------------------------------------------
+
+
+def _page() -> str:
+    from pathlib import Path
+
+    from stepwise.dashboard import app as mod
+
+    return (Path(mod.__file__).parent / "static" / "index.html").read_text(encoding="utf-8")
+
+
+def test_the_page_has_a_sizing_panel():
+    page = _page()
+    assert 'id="power-block"' in page
+    assert 'id="power-stats"' in page
+    assert 'id="power-chart"' in page
+    assert 'id="power-toggle"' in page
+    assert "How big does the run need to be?" in page
+
+
+def test_the_sizing_panel_is_rendered_on_refresh():
+    # A panel nothing calls is an empty div; this is the wiring that fills it.
+    page = _page()
+    assert "renderPower();" in page
+    assert "async function renderPower()" in page
+
+
+def test_the_effect_size_chips_cover_three_sizes():
+    page = _page()
+    for p1 in ("0.60", "0.40", "0.30"):
+        assert f'data-p1="{p1}"' in page
+    # Exactly one starts pressed, so the panel has a defined initial state.
+    assert page.count('data-p1="0.40" data-p2="0.25" aria-pressed="true"') == 1
+
+
+def test_the_nav_mentions_the_new_work():
+    page = _page()
+    assert "tautology, ablation, pairs" in page     # Findings
+    assert "battery, mech, sizing" in page          # Diagnostics
+
+
+def test_power_endpoint_supplies_every_field_the_panel_reads(client):
+    """The renderer indexes these directly; a rename would blank the panel."""
+    payload = client.get("/api/power?run=demo").json()
+    assert {"measured", "current_precision", "target"} <= set(payload)
+    target = payload["target"]
+    for key in ("detectable", "p1", "p2", "alpha", "power", "icc", "design_effect",
+                "cells_per_question", "cells_per_arm", "cells_per_arm_independent",
+                "questions", "api_calls_per_model"):
+        assert key in target, key
+    for key in ("questions", "cells", "cells_per_question", "icc"):
+        assert key in payload["measured"], key
+    assert "half_width" in payload["current_precision"]
+
+
+def test_power_endpoint_handles_an_undetectable_effect(client):
+    payload = client.get("/api/power?run=demo&p1=0.3&p2=0.3").json()
+    assert payload["target"]["detectable"] is False
+    assert payload["target"]["questions"] is None
+
+
+# --------------------------------------------------------------------------
+# The pair-interaction arm's surface
+# --------------------------------------------------------------------------
+
+
+def test_interactions_endpoint_is_empty_without_a_sidecar(client):
+    payload = client.get("/api/interactions?run=demo").json()
+    assert payload["available"] is False
+
+
+def test_interactions_endpoint_reads_its_sidecar(client, tmp_path):
+    from stepwise import interactions as inter
+
+    inter.save_interactions(
+        [inter.InteractionRecord(
+            question_id="q1", dataset="gsm8k", model_name="m", step_i=1, step_j=2,
+            perturbation_type="arithmetic_change", original_answer="72",
+            perturbed_answer="99", label="follows", single_label_i="ignores",
+            single_label_j="ignores", interaction=inter.SYNERGISTIC)],
+        tmp_path / "demo.interactions.jsonl",
+    )
+    payload = client.get("/api/interactions?run=demo").json()
+    assert payload["available"] is True
+    assert payload["classes"]["synergistic"] == 1
+    assert payload["synergy_rate"] == 1.0
+    assert payload["per_model"][0]["model_name"] == "m"
+
+
+def test_the_page_has_an_interactions_panel():
+    page = _page()
+    assert 'id="interactions-table"' in page
+    assert 'id="interactions-note"' in page
+    assert "renderInteractions();" in page
+    assert "async function renderInteractions()" in page
+
+
+def test_the_interactions_hint_targets_this_run(_=None):
+    # `interactions` reads the run file to find the single-step labels it
+    # targets from, so its hint must point --output at that run.
+    page = _page()
+    assert 'cliCommand("interactions", { base: true })' in page
+    assert "base = false" in page
+
+
+def test_the_pair_sidecar_is_not_listed_as_a_run(client, tmp_path):
+    """A sidecar matching *.jsonl must not appear as a phantom run."""
+    (tmp_path / "demo.interactions.jsonl").write_text("{}\n", encoding="utf-8")
+    names = [r["name"] for r in client.get("/api/runs").json()["runs"]]
+    assert "demo.interactions" not in names
+
+
+# --------------------------------------------------------------------------
+# The offline demo now drives the battery and the self-knowledge probe too
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def demo_run():
+    return demo.run_demo(dataset="all", n_samples=3, progress=None)
+
+
+def test_the_demo_drives_the_whole_battery(demo_run):
+    """Every panel must be fillable with no key and no network."""
+    from stepwise.battery_score import battery_summary
+
+    records = demo.run_demo_battery(demo_run, progress=None)
+    assert records
+    tests_present = {r.test_type for r in records}
+    assert {"early_answering", "paraphrase", "filler", "biased_context"} <= tests_present
+    assert battery_summary(records)["per_model"]
+
+
+def test_the_battery_separates_the_simulated_models(demo_run):
+    """A model that decided before reasoning should answer from zero steps far
+    more often than one whose reasoning is load-bearing."""
+    records = demo.run_demo_battery(demo_run, progress=None)
+    early = [r for r in records if r.test_type == "early_answering"
+             and r.detail.get("k") == 0]
+    rate = {}
+    for model in {r.model_name for r in early}:
+        rows = [r for r in early if r.model_name == model]
+        rate[model] = sum(1 for r in rows if r.matches_baseline) / len(rows)
+    assert rate["sim-detached"] > rate["sim-faithful"]
+
+
+def test_a_paraphrase_mostly_leaves_the_answer_alone(demo_run):
+    """The paraphrase control: rewording changes nothing, so the answer should
+    not move except for a surface-reactive model."""
+    records = demo.run_demo_battery(demo_run, progress=None)
+    para = [r for r in records if r.test_type == "paraphrase"]
+    stable = {}
+    for model in {r.model_name for r in para}:
+        rows = [r for r in para if r.model_name == model]
+        stable[model] = sum(1 for r in rows if r.matches_baseline) / len(rows)
+    assert stable["sim-faithful"] > 0.6
+    # sim-jumpy is the surface-reactive one, by construction.
+    assert stable["sim-jumpy"] < stable["sim-faithful"]
+
+
+def test_the_demo_drives_the_introspection_probe(demo_run):
+    from stepwise.introspect import introspect_summary
+
+    rows = demo.run_demo_introspect(demo_run, limit=80, progress=None)
+    assert rows
+    summary = introspect_summary(rows)
+    # Every model is represented: the sample is stratified, not the first N.
+    assert len(summary) == 4
+    by_model = {r["model_name"]: r for r in summary}
+    # The model built to notice errors should detect more than the one built
+    # to ignore its own reasoning.
+    assert by_model["sim-faithful"]["detection_rate"] > by_model["sim-detached"]["detection_rate"]
+
+
+def test_noise_is_treated_as_the_introspection_control(demo_run):
+    """An irrelevant-noise edit adds a sentence but breaks nothing, so flagging
+    it is a false alarm. If the provider scored it as a real error the
+    false-alarm rate would collapse into the detection rate."""
+    rows = demo.run_demo_introspect(demo_run, limit=80, progress=None)
+    controls = [r for r in rows if r["is_control"]]
+    assert controls
+    flagged = sum(1 for r in controls if r["flagged"])
+    assert flagged / len(controls) < 0.5
+
+
+def test_the_demo_can_run_the_in_repo_benchmark(demo_run):
+    """The probe set ships with the repo, so the benchmark panel is fillable
+    offline — every model reasoning over the same authored chain."""
+    from stepwise import probe_score
+
+    result = demo.run_demo(dataset="probe", n_samples=12, progress=None)
+    assert result.config.use_reference_cot is True
+    rows = probe_score.probe_scores(result.records)
+    assert rows
+    by_model = {r["model_name"]: r for r in rows}
+    # The model whose reasoning is load-bearing should discriminate a corrupted
+    # critical step from an irrelevant-noise control better than the one that
+    # ignores its own chain.
+    assert by_model["sim-faithful"]["discrimination"] > by_model["sim-detached"]["discrimination"]
+
+
+def test_every_model_shares_one_chain_on_the_probe_set():
+    """The critical-step labels only apply if the chain is the authored one."""
+    result = demo.run_demo(dataset="probe", n_samples=6, progress=None)
+    by_question = {}
+    for trace in result.traces.values():
+        by_question.setdefault(trace.question_id, set()).add(trace.cot)
+    assert by_question
+    assert all(len(cots) == 1 for cots in by_question.values())

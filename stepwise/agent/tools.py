@@ -18,6 +18,7 @@ from typing import Any, Callable
 import pandas as pd
 
 from .. import score
+from .. import stats
 from ..config import LABELS, PERTURBATION_TYPES
 
 #: How many records a single tool call may return in full. Keeps one query
@@ -382,6 +383,93 @@ def tool_search_steps(
     }
 
 
+def tool_tautology_check(ctx: AnalysisContext) -> dict:
+    """How much of the run's dependency was the answer merely being restated."""
+    report = score.tautology_report(ctx.frame)
+    if not report.get("n_scored"):
+        return {"error": "no scored records in this run"}
+    return {
+        **report,
+        "how_to_read": (
+            "dependency_content_filter is the honest headline: it removes only the "
+            "cells where the corruption took away an answer the step was already "
+            "displaying, so the re-run had a different answer to copy. "
+            "dependency_positional_filter is the older, cruder proxy that removed "
+            "whichever step came last. leaks_outside_final_step counts tautological "
+            "cells the positional proxy wrongly kept; final_steps_without_leak counts "
+            "real evidence it wrongly threw away. Quote the content filter and say "
+            "which of the two it is, never the all-steps number on its own."
+        ),
+    }
+
+
+def tool_necessity_check(ctx: AnalysisContext) -> dict:
+    """The ablation arm: which steps the answer actually needed."""
+    report = score.necessity_report(ctx.frame)
+    if not report.get("n_ablation_cells"):
+        return {
+            "n_ablation_cells": 0,
+            "note": (
+                "This run has no ablation cells. Re-run with "
+                "--perturbations fact_substitution,logical_error,arithmetic_change,"
+                "irrelevant_noise,step_deletion to add them."
+            ),
+        }
+    return {
+        **report,
+        "how_to_read": (
+            "Here 'follows' means the step was NECESSARY - the answer moved when the "
+            "step was deleted - not that the model followed an error. Do not pool "
+            "these cells with the corruption classes or average them into "
+            "dependency. The cross_tab is the interesting part: "
+            "necessary_not_followed are steps the model needs but does not blindly "
+            "trust, and redundant_but_followed are steps the answer tracked despite "
+            "not needing them, which is surface reactivity rather than reasoning."
+        ),
+    }
+
+
+def tool_power_check(ctx: AnalysisContext, p1: float = 0.40, p2: float = 0.25) -> dict:
+    """How many questions this design needs to resolve a given effect."""
+    plan = stats.power_plan(ctx.frame, p1=p1, p2=p2)
+    return {
+        **plan,
+        "how_to_read": (
+            "Cells from one question share a chain of thought, so they are not "
+            "independent observations. design_effect is how much that clustering "
+            "inflates the needed sample; questions is the honest answer. If "
+            "current_precision.half_width is wider than the effect being discussed, "
+            "say the run cannot resolve it rather than quoting the point estimate "
+            "as a finding."
+        ),
+    }
+
+
+def tool_interaction_check(ctx: AnalysisContext) -> dict:
+    """Pair interventions: the redundancy a single-step probe cannot see."""
+    from .. import interactions as inter
+    from ..config import RESULTS_DIR
+
+    path = RESULTS_DIR / f"{ctx.dataset or 'gsm8k'}.interactions.jsonl"
+    rows = inter.load_interactions(path)
+    if not rows:
+        return {"n": 0, "note": (
+            "This run has no pair records. Run `python main.py interactions` against it "
+            "to add them. Do not infer redundancy from the single-step cells - they "
+            "cannot distinguish inert reasoning from reasoning done twice.")}
+    return {
+        **inter.interaction_report(rows),
+        "how_to_read": (
+            "'synergistic' means NEITHER step moved the answer alone but both together "
+            "did - a backup path, which the single-step arm recorded as 'ignores' twice "
+            "and read as inert reasoning. synergy_rate is that count over the pairs "
+            "that could possibly have been synergistic (both singles 'ignores'), not "
+            "over all pairs. A pair containing a step that already moves the answer "
+            "alone can only come out 'additive', which is why pairs are targeted."
+        ),
+    }
+
+
 def tool_label_agreement_check(ctx: AnalysisContext, limit: int = 8) -> dict:
     """Cells most likely to be mislabelled, for the agent to eyeball.
 
@@ -623,6 +711,52 @@ TOOLS: list[Tool] = [
             required=["query"],
         ),
         fn=tool_search_steps,
+    ),
+    Tool(
+        name="tautology_check",
+        description=(
+            "How much of the headline 'dependency' was the tautology of the answer "
+            "being restated rather than reasoning being load-bearing. Compares the "
+            "old positional proxy (drop the last step) against the content-based "
+            "test (drop cells where the corruption removed an answer the step was "
+            "displaying). Run this before quoting any dependency number."
+        ),
+        parameters=_obj({}),
+        fn=tool_tautology_check,
+    ),
+    Tool(
+        name="necessity_check",
+        description=(
+            "The ablation arm, where a step was DELETED rather than corrupted, so "
+            "'follows' means the step was necessary. Reports the necessity rate and "
+            "a cross-tab against the corruption cells on the same steps. Empty "
+            "unless the run included step_deletion."
+        ),
+        parameters=_obj({}),
+        fn=tool_necessity_check,
+    ),
+    Tool(
+        name="power_check",
+        description=(
+            "How many questions this design needs to separate a follow-rate from its "
+            "control, and the 95% CI half-width the current run can actually support. "
+            "Reads cells-per-question and the intra-cluster correlation off the run. "
+            "Use it whenever asked whether a difference is big enough to claim."
+        ),
+        parameters=_obj({"p1": {"type": "number"}, "p2": {"type": "number"}}),
+        fn=tool_power_check,
+    ),
+    Tool(
+        name="interaction_check",
+        description=(
+            "Pair interventions, where TWO steps were corrupted at once. Reports how "
+            "often a pair moved the answer although neither step moved it alone - a "
+            "redundant chain with two routes to the answer, which single-step probing "
+            "records as inert reasoning. Use it before concluding from 'ignores' cells "
+            "that a model's reasoning does no work."
+        ),
+        parameters=_obj({}),
+        fn=tool_interaction_check,
     ),
     Tool(
         name="label_agreement_check",

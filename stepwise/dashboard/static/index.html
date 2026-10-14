@@ -930,15 +930,27 @@ table.data tbody tr:hover { background: var(--paper-3); }
     <div class="section-head">
       <div>
         <div class="label" style="margin-bottom:14px;">03b — What changed when we measured it properly</div>
-        <h2>Two corrections, two findings.</h2>
+        <h2>What one step at a time<br>cannot tell you.</h2>
       </div>
     </div>
     <div class="section-body" style="display:grid; gap:40px;">
 
       <div>
         <h3 style="font-size:19px; margin-bottom:6px;">The answer-step tautology</h3>
-        <p class="note" style="margin-bottom:16px;">Corrupting the <em>final</em> step — the one that states the answer — changes the answer almost by definition. That is not faithfulness. Here is each model's dependency with that step in, and with it removed. The gap is how much of "dependency" was the tautology.</p>
+        <p class="note" style="margin-bottom:16px;">Corrupting a step that <em>states</em> the answer changes the answer almost by definition. That is not faithfulness. Two ways of spotting those cells are shown: <strong>final step</strong> is the crude positional proxy, and <strong>answer overwritten</strong> asks whether the edit actually removed an answer the step was displaying — wherever that step sat in the chain. The second is the honest one; the gap between them is how much the proxy was getting wrong. <strong>Inflation</strong> is how many percentage points the all-steps figure sits above the honest one — positive means the tautology was flattering the model.</p>
         <div class="table-scroll"><table class="data" id="tautology-table"></table></div>
+        <p class="note on-panel" id="tautology-note" style="margin-top:10px;"></p>
+
+        <h3 style="font-size:19px; margin:28px 0 6px;">Was the step needed at all?</h3>
+        <p class="note" style="margin-bottom:16px;">Every corruption injects an <em>error</em>, which a model can defeat by noticing it. Deleting the step instead injects nothing to notice, so a moved answer means the step was <strong>necessary</strong> — not that an error was followed. The cross-tab against the corruption cells on the same steps is where the two disagree.</p>
+        <div class="table-scroll"><table class="data" id="necessity-table"></table></div>
+        <div class="table-scroll" id="necessity-cross" style="margin-top:12px;"></div>
+
+        <h3 style="font-size:19px; margin:28px 0 6px;">Two steps at once — the redundancy a single probe can't see</h3>
+        <p class="note" style="margin-bottom:16px;">Moving one step at a time has a blind spot built into it. If a chain reaches its answer by <em>two</em> routes, breaking either alone changes nothing — and the single-step probe records <code>ignores</code> twice and calls the reasoning inert, when it was load-bearing twice over. Breaking both at once is the only intervention that can tell those apart. <strong>Synergistic</strong> pairs are the finding: neither step moved the answer alone, together they did.</p>
+        <div class="table-scroll"><table class="data" id="interactions-table"></table></div>
+        <p class="note on-panel" id="interactions-note" style="margin-top:10px;"></p>
+        <div id="interactions-examples" style="margin-top:12px;"></div>
       </div>
 
       <div>
@@ -1023,6 +1035,19 @@ table.data tbody tr:hover { background: var(--paper-3); }
         <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">Severity ladder — dose-response</h3>
         <p class="note on-panel" style="margin-bottom:16px;">The same cell corrupted by a near-miss, a clear error, and an order-of-magnitude error. A faithful model follows more as the <em>consequential</em> error grows, while the <em>control</em> (more and more irrelevant noise) stays flat and low. A control line that climbs with the amount of noise is surface-reactivity, not reasoning.</p>
         <div id="severity-chart"></div>
+      </div>
+
+      <div id="power-block">
+        <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">How big does the run need to be?</h3>
+        <p class="note on-panel" style="margin-bottom:16px;">The unit of sampling is the <em>question</em>, not the cell — one question's cells share a chain of thought, so they carry less information than the same number of independent observations. The <b>design effect</b> is how much that clustering inflates what a run needs; ignoring it under-sizes the experiment. Both inputs are measured from this run, not assumed.</p>
+        <div class="metric-toggle" id="power-toggle" role="group" aria-label="Effect size to detect" style="margin-bottom:16px;">
+          <button class="chip" data-p1="0.60" data-p2="0.25" aria-pressed="false">large · 60% vs 25%</button>
+          <button class="chip" data-p1="0.40" data-p2="0.25" aria-pressed="true">moderate · 40% vs 25%</button>
+          <button class="chip" data-p1="0.30" data-p2="0.25" aria-pressed="false">small · 30% vs 25%</button>
+        </div>
+        <dl class="stats" id="power-stats"></dl>
+        <div id="power-chart" style="margin-top:22px;"></div>
+        <p class="note on-panel" id="power-note" style="margin-top:14px;"></p>
       </div>
 
       <div id="capability-block">
@@ -1163,6 +1188,13 @@ const state = {
   page: 0,
   pageSize: 25,
   selected: null,
+  // The effect the sizing panel is asked to resolve. No single number is the
+  // right default, so this is a visible, changeable choice rather than a
+  // constant buried in the planner.
+  powerP1: 0.40,
+  powerP2: 0.25,
+  // Task families the CLI's --dataset accepts. A run name is not always one.
+  datasets: [],
 };
 
 const $ = (id) => document.getElementById(id);
@@ -1180,6 +1212,48 @@ async function api(path, params = {}) {
   return response.json();
 }
 
+/* ---------------------------------------------------------------------------
+   Commands the empty states suggest.
+
+   `--dataset` names a task family (gsm8k, strategyqa, …), not a saved run. The
+   hints used to interpolate the run name straight into it, which produces a
+   command that exits with "Unknown dataset" for every run not named after a
+   dataset — including `demo`, which is what the dashboard opens on. So: when
+   the run IS a dataset, the simple form is right; when it is not, the command
+   has to name a real dataset and redirect its output to this run's sidecar, or
+   the results land beside the wrong run.
+   --------------------------------------------------------------------------- */
+//
+// Not every command needs this. `introspect`, `analyse` and `score` read an
+// existing results file, so their --dataset IS a run name and the plain form
+// is already correct for them; only the commands that *generate* from a task
+// family (run, battery, mech) need redirecting.
+// `base: true` points --output at this run's own results file. `interactions`
+// reads that file to find the single-step labels it targets from, and writes
+// its sidecar beside it, so without this the probe would target a dataset run
+// that may not exist and land its output next to the wrong run.
+function cliCommand(verb, { suffix = null, extra = "", base = false } = {}) {
+  const run = state.run || "gsm8k";
+  const datasets = state.datasets || [];
+  if (datasets.includes(run)) {
+    return `python main.py ${verb} --dataset ${run}${extra ? " " + extra : ""}`.trim();
+  }
+  // Prefer a dataset this run actually covers, so the sidecar is about the
+  // same questions - and among those, the one carrying the most cells, since
+  // the alphabetically-first one is rarely what the run is really about.
+  const covered = ((state.summary && state.summary.coverage &&
+    state.summary.coverage.datasets) || []).filter((d) => datasets.includes(d));
+  const weight = {};
+  for (const row of (state.summary && state.summary.by_dataset) || []) {
+    if (covered.includes(row.dataset)) weight[row.dataset] = (weight[row.dataset] || 0) + (row.n || 0);
+  }
+  const ranked = covered.slice().sort((a, b) => (weight[b] || 0) - (weight[a] || 0));
+  const dataset = ranked[0] || datasets[0] || "gsm8k";
+  const out = base ? ` --output results/${run}.jsonl`
+    : suffix ? ` --output results/${run}.${suffix}.jsonl` : "";
+  return `python main.py ${verb} --dataset ${dataset}${extra ? " " + extra : ""}${out}`;
+}
+
 /* ===========================================================================
    Views — one focused section group at a time, driven by the sidebar
    =========================================================================== */
@@ -1188,9 +1262,9 @@ const VIEWS = [
     sections: ["top"] },
   { id: "scores", label: "Faithfulness", ic: "▦", desc: "models × classes", grp: "Read",
     sections: ["heatmap", "datasets"] },
-  { id: "findings", label: "Findings", ic: "◆", desc: "tautology, domains, benchmark", grp: "Read",
+  { id: "findings", label: "Findings", ic: "◆", desc: "tautology, ablation, pairs", grp: "Read",
     sections: ["findings"] },
-  { id: "diagnostics", label: "Diagnostics", ic: "⚗", desc: "battery, mech, patching…", grp: "Deeper",
+  { id: "diagnostics", label: "Diagnostics", ic: "⚗", desc: "battery, mech, sizing…", grp: "Deeper",
     sections: ["methods"] },
   { id: "grid", label: "Step grid", ic: "▤", desc: "question × step", grp: "Deeper",
     sections: ["grid"] },
@@ -1243,6 +1317,7 @@ async function boot() {
   initNav();
   if (!runs.runs.length) return showNoRuns();
   state.runs = runs.runs;
+  state.datasets = runs.datasets || [];
 
   // Mark simulated runs in the picker itself, so nobody opens one thinking
   // it holds real results.
@@ -1301,6 +1376,8 @@ async function refresh() {
   renderModelTable();
   renderBreakdown();
   renderTautology();
+  renderNecessity();
+  renderInteractions();
   renderDomainChart();
   renderLeaderboard();
   renderBattery();
@@ -1313,6 +1390,7 @@ async function refresh() {
   renderProbe();
   renderSeverity();
   renderCapability();
+  renderPower();
   await Promise.all([renderDepGrid(), renderRecords()]);
 }
 
@@ -1536,7 +1614,7 @@ async function renderBattery() {
   try { data = await api("/api/battery", { run: state.run }); } catch { data = { available: false }; }
   const host = $("battery-block");
   if (!data.available || !(data.per_model || []).length) {
-    $("battery-table").innerHTML = `<tbody><tr><td class="empty-state on-panel">No battery run yet. <code>python main.py battery --dataset ${esc(state.run)}</code></td></tr></tbody>`;
+    $("battery-table").innerHTML = `<tbody><tr><td class="empty-state on-panel">No battery run yet. <code>${esc(cliCommand("battery", { suffix: "battery" }))}</code></td></tr></tbody>`;
     return;
   }
   const rows = data.per_model;
@@ -1557,7 +1635,7 @@ async function renderMech() {
   try { d = await api("/api/mech", { run: state.run }); } catch { d = { available: false }; }
   const host = $("mech-chart");
   if (!d.available) {
-    host.innerHTML = `<p class="empty-state on-panel">No mechanistic run yet. <code>python main.py mech --dataset ${esc(state.run)}</code> (local GPU, no API).</p>`;
+    host.innerHTML = `<p class="empty-state on-panel">No mechanistic run yet. <code>${esc(cliCommand("mech", { suffix: "mech" }))}</code> (local GPU, no API).</p>`;
     return;
   }
   // Two big numbers plus a per-step bar chart of mean log-prob drop.
@@ -1654,7 +1732,7 @@ async function renderPatch() {
   try { d = await api("/api/patch", { run: state.run }); } catch { d = { available: false }; }
   const host = $("patch-chart");
   if (!d.available || !(d.curve || []).length) {
-    host.innerHTML = `<p class="empty-state on-panel">No patching run yet. <code>python main.py mech --dataset ${esc(state.run)} --patch</code> (local GPU).</p>`;
+    host.innerHTML = `<p class="empty-state on-panel">No patching run yet. <code>${esc(cliCommand("mech", { suffix: "mech", extra: "--patch" }))}</code> (local GPU).</p>`;
     return;
   }
   const curve = d.curve;
@@ -1700,7 +1778,7 @@ function renderSeverity() {
   const order = { minimal: 0, moderate: 1, severe: 2 };
   const sevs = [...new Set(rows.map((r) => r.severity))].sort((a, b) => (order[a] ?? 1) - (order[b] ?? 1));
   if (!rows.length || sevs.length < 2) {
-    host.innerHTML = `<p class="empty-state on-panel">Needs more than one edit size. <code>python main.py --dataset ${esc(state.run)} --severities minimal,moderate,severe</code></p>`;
+    host.innerHTML = `<p class="empty-state on-panel">Needs more than one edit size. <code>${esc(cliCommand("run", { extra: "--severities minimal,moderate,severe" }))}</code></p>`;
     return;
   }
   const models = [...new Set(rows.map((r) => r.model_name))].sort();
@@ -1755,6 +1833,181 @@ function renderCapability() {
     `<p class="note on-panel" style="margin-top:8px;">${cap.correlation == null ? "Too few models for a correlation." : `Pearson r = <b>${cap.correlation}</b> across ${cap.n_models} models — ${cap.correlation > 0.3 ? "more capable models lean on their stated reasoning more" : cap.correlation < -0.3 ? "more capable models lean on it less" : "capability and faithfulness look unrelated here"}. Indicative at this n.`}</p>`;
 }
 
+/* ---------------------------------------------------------------------------
+   Sizing: what this run can resolve, and what the target effect would need.
+   The server does the statistics (stepwise/stats.py); this draws them. The
+   effect size is a chip toggle because "how many questions do I need" has no
+   single answer - it depends entirely on how big an effect you will settle for.
+   --------------------------------------------------------------------------- */
+async function renderPower() {
+  const host = $("power-stats");
+  if (!host) return;
+  const chart = $("power-chart"), note = $("power-note");
+  let d;
+  try {
+    d = await api("/api/power", { run: state.run, p1: state.powerP1, p2: state.powerP2 });
+  } catch {
+    d = null;
+  }
+  if (!d || !d.target) {
+    host.innerHTML = "";
+    chart.innerHTML = `<p class="empty-state on-panel">No scored records to measure a design from.</p>`;
+    note.textContent = "";
+    return;
+  }
+  const m = d.measured, cur = d.current_precision, t = d.target;
+  const stat = (label, value, sub) =>
+    `<div><dt>${esc(label)}</dt><dd>${value}${sub ? `<small> ${esc(sub)}</small>` : ""}</dd></div>`;
+
+  host.innerHTML = [
+    m ? stat("questions now", m.questions, `of ${m.cells}`) : "",
+    m ? stat("cells / question", m.cells_per_question, "") : "",
+    m ? stat("ICC", m.icc, "measured") : "",
+    stat("design effect", `${t.design_effect}&times;`, ""),
+    cur && cur.half_width != null
+      ? stat("95% CI now", `&plusmn;${(cur.half_width * 100).toFixed(1)}`, "pts")
+      : "",
+    t.detectable ? stat("questions needed", t.questions, "") : "",
+  ].join("");
+
+  if (!t.detectable) {
+    chart.innerHTML = "";
+    note.textContent = t.reason || "No effect to detect.";
+    return;
+  }
+
+  // Precision against run size. The curve is the honest shape of the problem:
+  // the interval narrows with the square root of the sample, so the first
+  // twenty questions buy far more than the next twenty.
+  const cellsPer = t.cells_per_question || 8, icc = t.icc || 0, deff = t.design_effect || 1;
+  const rate = t.p1;
+  const half = (q) => {
+    const n = (q * cellsPer) / deff;
+    return n > 0 ? 1.96 * Math.sqrt((rate * (1 - rate)) / n) : null;
+  };
+  const maxQ = Math.max(t.questions * 1.4, (m ? m.questions : 0) * 1.4, 20);
+  const maxH = Math.min(0.6, half(1) || 0.6);
+  const W = 560, H = 260, padL = 52, padR = 20, padT = 14, padB = 44;
+  const x = (q) => padL + (W - padL - padR) * Math.min(1, q / maxQ);
+  const y = (h) => padT + (H - padT - padB) * (1 - Math.min(1, (h || 0) / maxH));
+
+  const pts = [];
+  for (let q = 2; q <= maxQ; q += Math.max(1, Math.round(maxQ / 90))) {
+    const h = half(q);
+    if (h != null && h <= maxH) pts.push(`${x(q)},${y(h)}`);
+  }
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
+    const q = Math.round(maxQ * f), h = maxH * f;
+    return `<line x1="${padL}" x2="${W - padR}" y1="${y(h)}" y2="${y(h)}" class="dom-tick" opacity="0.3"/>` +
+      `<text x="${padL - 8}" y="${y(h) + 4}" text-anchor="end" class="dom-label">${(h * 100).toFixed(0)}</text>` +
+      `<text x="${x(q)}" y="${H - padB + 16}" text-anchor="middle" class="dom-label">${q}</text>`;
+  }).join("");
+
+  // The two markers that make the chart answerable: where the run is, and
+  // where it would have to get to. `row` stacks the labels, because the two
+  // counts are often close together and the text would otherwise overlap; and
+  // a label near the right edge is anchored to the other side of its line so
+  // it stays inside the viewBox.
+  const marker = (q, colour, label, dashed, row) => {
+    const h = half(q);
+    if (h == null || q > maxQ) return "";
+    const yy = h > maxH ? padT : y(h);
+    const nearRight = x(q) > W - padR - 70;
+    return `<line x1="${x(q)}" x2="${x(q)}" y1="${padT}" y2="${H - padB}" stroke="${colour}" ` +
+      `stroke-width="1.4" ${dashed ? 'stroke-dasharray="4 3"' : ""} opacity="0.85"/>` +
+      (h <= maxH ? `<circle cx="${x(q)}" cy="${yy}" r="4.5" fill="${colour}"/>` : "") +
+      `<text x="${x(q) + (nearRight ? -7 : 7)}" y="${padT + 12 + row * 15}" ` +
+      `text-anchor="${nearRight ? "end" : "start"}" class="dom-label" ` +
+      `style="fill:${colour}">${esc(label)}</text>`;
+  };
+
+  chart.innerHTML =
+    `<div style="display:flex; gap:18px; margin-bottom:8px; font:500 11px var(--mono);">` +
+    `<span style="color:var(--ignores)">● this run</span>` +
+    `<span style="color:var(--accent-up)">● needed for a ${(t.p1 * 100) | 0}% vs ${(t.p2 * 100) | 0}% gap</span></div>` +
+    `<svg viewBox="0 0 ${W} ${H}" style="max-width:100%; height:auto;" role="img" ` +
+    `aria-label="Confidence interval half-width against number of questions">${ticks}` +
+    (pts.length ? `<polyline points="${pts.join(" ")}" fill="none" stroke="var(--on-panel)" stroke-width="2" opacity="0.75"/>` : "") +
+    (m ? marker(m.questions, "var(--ignores)", `${m.questions} now`, true, 0) : "") +
+    marker(t.questions, "var(--accent-up)", `${t.questions} needed`, false, m ? 1 : 0) +
+    `<text x="${(padL + W - padR) / 2}" y="${H - 6}" text-anchor="middle" class="dom-label">questions →</text>` +
+    `<text x="13" y="${(padT + H - padB) / 2}" text-anchor="middle" ` +
+    `transform="rotate(-90 13 ${(padT + H - padB) / 2})" class="dom-label">95% CI half-width (points)</text></svg>`;
+
+  const calls = t.api_calls_per_model ? t.api_calls_per_model.toLocaleString() : "?";
+  const shortfall = m && m.questions < t.questions;
+  note.innerHTML =
+    `Separating a <b>${(t.p1 * 100) | 0}%</b> follow-rate from a <b>${(t.p2 * 100) | 0}%</b> control ` +
+    `at &alpha;=${t.alpha}, power=${t.power} needs <b>${t.cells_per_arm_independent}</b> cells per arm if ` +
+    `cells were independent. They are not: at an ICC of ${t.icc} the design effect is ` +
+    `<b>${t.design_effect}&times;</b>, so it is really <b>${t.cells_per_arm}</b> cells per arm — ` +
+    `<b>${t.questions} questions</b>, about <b>${calls}</b> API calls per model. ` +
+    (shortfall
+      ? `This run has ${m.questions}, so treat its point estimates as a working pipeline rather than a result.`
+      : m ? `This run has ${m.questions}, which clears that bar.` : "");
+}
+
+/* ---------------------------------------------------------------------------
+   Pair interventions. The headline is the synergy rate: of the pairs where
+   NEITHER step moved the answer on its own, how often did moving both move it.
+   That fraction is reasoning the single-step arm scored as inert when it was
+   actually redundant, and nothing else in the project can measure it.
+   --------------------------------------------------------------------------- */
+async function renderInteractions() {
+  const host = $("interactions-table");
+  if (!host) return;
+  const note = $("interactions-note"), examples = $("interactions-examples");
+  let d;
+  try { d = await api("/api/interactions", { run: state.run }); } catch { d = { available: false }; }
+  if (!d.available || !d.n) {
+    host.innerHTML = `<tbody><tr><td class="empty-state on-panel">No pair run yet.
+      <code>${esc(cliCommand("interactions", { base: true }))}</code> — it reads this run's single-step
+      labels and targets the pairs where a backup path could be hiding.</td></tr></tbody>`;
+    note.textContent = "";
+    examples.innerHTML = "";
+    return;
+  }
+  const rows = d.per_model || [];
+  const pct1 = (v) => v == null ? "—" : pct(v);
+  host.innerHTML =
+    `<thead><tr><th>model</th><th>synergistic</th><th>additive</th><th>masked</th>` +
+    `<th>inert</th><th>synergy rate</th></tr></thead><tbody>` +
+    rows.map((r) => `<tr><td>${esc(r.model_name)}</td>` +
+      `<td class="num" style="color:${r.synergistic ? "var(--follows)" : "inherit"}">` +
+      `<strong>${r.synergistic}</strong></td>` +
+      `<td class="num">${r.additive}</td><td class="num">${r.masked}</td>` +
+      `<td class="num">${r.inert}</td>` +
+      `<td class="num">${pct1(r.synergy_rate)}<small> of ${r.n_eligible}</small></td></tr>`
+    ).join("") + `</tbody>`;
+
+  const parts = [];
+  if (d.synergy_rate != null) {
+    parts.push(`Synergy rate ${pct(d.synergy_rate)} — ${d.classes.synergistic} of
+      ${d.n_eligible} pairs where neither step moved the answer alone moved it together.
+      That is reasoning the single-step arm recorded as inert.`);
+  }
+  if (d.n_tautological) {
+    parts.push(`${d.n_tautological} pair(s) excluded: one half merely overwrote the
+      stated answer, which is the same tautology the single-step arm filters out.`);
+  }
+  const targeted = (d.selection || {}).targeted || 0;
+  if (targeted) {
+    parts.push(`${targeted} pair(s) were targeted from steps whose single-step cells both
+      came back "ignores" — a pair containing a step that already moves the answer alone
+      can only come out additive.`);
+  }
+  note.textContent = parts.join(" ");
+
+  examples.innerHTML = (d.examples || []).length
+    ? `<table class="data"><thead><tr><th>question</th><th>steps</th><th>answer moved</th></tr></thead><tbody>` +
+      d.examples.slice(0, 5).map((e) =>
+        `<tr><td>${esc(e.question_id)}<small class="muted"> ${esc(e.model_name)}</small></td>` +
+        `<td class="num">${e.step_i} + ${e.step_j}</td>` +
+        `<td>${esc(e.original_answer)} &rarr; <b>${esc(e.perturbed_answer)}</b></td></tr>`
+      ).join("") + `</tbody></table>`
+    : "";
+}
+
 async function renderProbe() {
   const block = $("probe-block");
   if (!block) return;
@@ -1798,18 +2051,84 @@ async function renderProbe() {
    Findings: the tautology gap and the domain comparison
    =========================================================================== */
 function renderTautology() {
-  const all = Object.fromEntries((state.summary.by_model_all_steps || []).map((r) => [r.model_name, r]));
-  const res = Object.fromEntries((state.summary.by_model_reasoning || []).map((r) => [r.model_name, r]));
-  const models = Object.keys(all);
-  if (!models.length) { $("tautology-table").innerHTML = `<tbody><tr><td class="empty-state">No data.</td></tr></tbody>`; return; }
-  $("tautology-table").innerHTML =
-    `<thead><tr><th>model</th><th>dependency · all steps</th><th>dependency · reasoning only</th><th>share that was the answer step</th></tr></thead><tbody>` +
-    models.map((m) => {
-      const a = all[m].dependency, r = (res[m] || {}).dependency ?? 0;
-      const share = a > 0 ? (a - r) / a : 0;
-      return `<tr><td>${esc(m)}</td><td class="num">${pct(a)}</td><td class="num">${pct(r)}</td>` +
-        `<td class="num" style="color:${share > 0.5 ? "var(--follows)" : "inherit"}">${a > 0 ? pct(share) : "—"}</td></tr>`;
+  // Three dependency figures per model over the same cells: all steps, the
+  // positional "final step" filter, and the content-based "answer
+  // overwritten" filter. Showing the middle one is the point - it is what the
+  // project used to report, and the gap is the correction.
+  const taut = state.summary.tautology || {};
+  const rows = taut.per_model || [];
+  const host = $("tautology-table");
+  const note = $("tautology-note");
+  if (!rows.length) {
+    host.innerHTML = `<tbody><tr><td class="empty-state">No data.</td></tr></tbody>`;
+    if (note) note.textContent = "";
+    return;
+  }
+  host.innerHTML =
+    `<thead><tr><th>model</th><th>all steps</th><th>final-step filter</th>` +
+    `<th>answer overwritten</th><th>inflation</th></tr></thead><tbody>` +
+    rows.map((r) => {
+      const a = r.dependency_all_steps, p = r.dependency_positional_filter;
+      const c = r.dependency_content_filter;
+      // Signed percentage points, not a share. Removing the tautological cells
+      // usually LOWERS dependency — that is the whole point — but it can raise
+      // it where those cells happened to be less dependent than the rest, and
+      // a "share that was tautology" of -6% is nonsense where "-6 pp" reads
+      // correctly in both directions.
+      const delta = (a != null && c != null) ? (a - c) * 100 : null;
+      const num = (v) => v == null ? "—" : pct(v);
+      const sign = delta == null ? "—" : `${delta > 0 ? "+" : ""}${delta.toFixed(1)} pp`;
+      return `<tr><td>${esc(r.model_name)}</td><td class="num">${num(a)}</td>` +
+        `<td class="num" style="opacity:.65">${num(p)}</td>` +
+        `<td class="num"><strong>${num(c)}</strong></td>` +
+        `<td class="num" title="all steps minus the answer-overwritten filter" ` +
+        `style="color:${(delta || 0) > 5 ? "var(--follows)" : "inherit"}">${sign}</td></tr>`;
     }).join("") + `</tbody>`;
+  if (!note) return;
+  const parts = [];
+  if (taut.leaks_outside_final_step) {
+    parts.push(`${taut.leaks_outside_final_step} tautological cell(s) were not the final
+      step, so the positional proxy counted them as reasoning.`);
+  }
+  if (taut.final_steps_without_leak) {
+    parts.push(`${taut.final_steps_without_leak} final-step cell(s) left the answer in
+      place, so the positional proxy was discarding real evidence.`);
+  }
+  note.textContent = parts.length ? parts.join(" ")
+    : "On this run the two filters agree on every cell.";
+}
+
+async function renderNecessity() {
+  // The ablation arm. Absent unless the run opted into step_deletion, so this
+  // explains how to get it rather than showing an empty table.
+  const host = $("necessity-table");
+  if (!host) return;
+  const d = state.summary.necessity || {};
+  if (!d.n_ablation_cells) {
+    host.innerHTML = `<tbody><tr><td class="empty-state on-panel">No ablation cells in this
+      run. Add the arm with <code>${esc(cliCommand("run", { extra:
+      "--perturbations fact_substitution,logical_error,arithmetic_change,irrelevant_noise,step_deletion" }))}</code></td></tr></tbody>`;
+    return;
+  }
+  const tab = d.cross_tab || {};
+  const rowsHtml = (d.per_model || []).map((r) =>
+    `<tr><td>${esc(r.model_name)}</td><td class="num">${pct(r.necessity_rate)}</td>` +
+    `<td class="num">${r.necessary}</td><td class="num">${r.redundant}</td>` +
+    `<td class="num">${r.n}</td></tr>`).join("");
+  host.innerHTML =
+    `<thead><tr><th>model</th><th>necessary</th><th>#needed</th><th>#redundant</th><th>n</th></tr></thead>` +
+    `<tbody>${rowsHtml}</tbody>`;
+  const cross = $("necessity-cross");
+  if (cross) {
+    cross.innerHTML = Object.keys(tab).length
+      ? `<table class="data"><thead><tr><th>outcome on the same step</th><th>steps</th></tr></thead><tbody>` +
+        `<tr><td>needed, and followed an error</td><td class="num">${tab.necessary_and_followed}</td></tr>` +
+        `<tr><td>needed, but did <strong>not</strong> follow — depends on it without trusting it</td><td class="num">${tab.necessary_not_followed}</td></tr>` +
+        `<tr><td><strong>not</strong> needed, yet followed — surface reactivity</td><td class="num">${tab.redundant_but_followed}</td></tr>` +
+        `<tr><td>not needed, and ignored</td><td class="num">${tab.redundant_and_ignored}</td></tr>` +
+        `</tbody></table>`
+      : "";
+  }
 }
 
 function renderLeaderboard() {
@@ -2348,6 +2667,16 @@ $("metric-toggle").addEventListener("click", (event) => {
   $("metric-toggle").querySelectorAll("[data-metric]").forEach((b) =>
     b.setAttribute("aria-pressed", String(b.dataset.metric === state.metric)));
   renderHeatmap();
+});
+
+$("power-toggle").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-p1]");
+  if (!button) return;
+  state.powerP1 = Number(button.dataset.p1);
+  state.powerP2 = Number(button.dataset.p2);
+  $("power-toggle").querySelectorAll("[data-p1]").forEach((b) =>
+    b.setAttribute("aria-pressed", String(b === button)));
+  renderPower();
 });
 
 $("chat-send").addEventListener("click", sendChat);

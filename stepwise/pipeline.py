@@ -35,8 +35,9 @@ from .answers import answers_match, extract_answer
 from .config import ModelSpec, RunConfig, resolve_model
 from .datasets import Sample, load_samples
 from .extractor import ExtractedCoT, extract_steps
+from .leakage import answer_overwritten, step_states_answer
 from .llm import LLMClient, LLMError, make_cache_key
-from .perturbations import is_applicable, perturb_step
+from .perturbations import is_ablation, is_applicable, perturb_step
 
 FOLLOWS = "follows"
 IGNORES = "ignores"
@@ -142,7 +143,17 @@ class EvalRecord:
     domain: str = ""
     #: True when the perturbed step is the answer-bearing final step, whose
     #: corruption changes the answer trivially rather than through reasoning.
+    #: A *positional* proxy, kept for continuity with earlier runs; the two
+    #: fields below decide the same question by content and are sharper.
     is_answer_step: bool = False
+    #: True when the step being corrupted already displayed the baseline
+    #: answer, wherever it sits in the chain (:mod:`stepwise.leakage`).
+    states_answer: bool = False
+    #: True when the corruption *removed* that displayed answer, so the
+    #: perturbed trace shows a different one for the re-run to read off. This
+    #: is the precise tautology, and the filter every "reasoning steps only"
+    #: figure prefers when the record carries the step texts to decide it.
+    answer_overwritten: bool = False
     rerun_mode: str = "full"
     error: str = ""
     timestamp: float = field(default_factory=time.time)
@@ -327,10 +338,17 @@ def iter_cells(
 ) -> list[tuple[int, str]]:
     """Every (step, class) cell worth spending calls on for this trace."""
     cells = []
+    n_steps = len(extracted)
     for step in list(extracted)[:max_steps]:
         for ptype in perturbation_types:
-            if is_applicable(ptype, step.text):
-                cells.append((step.index, ptype))
+            if not is_applicable(ptype, step.text):
+                continue
+            # Deleting the only step leaves no reasoning at all, which asks the
+            # battery's early-answering question rather than this one. Skip it
+            # so the ablation denominator stays honest.
+            if is_ablation(ptype) and n_steps < 2:
+                continue
+            cells.append((step.index, ptype))
     return cells
 
 
@@ -375,10 +393,19 @@ def evaluate_cell(
         n_choices=_n_choices(sample),
         domain=sample.domain,
         is_answer_step=step_idx >= len(extracted),
+        states_answer=step_states_answer(
+            step.text, trace.answer, sample.answer_type, sample.choices
+        ),
         rerun_mode=rerun_mode,
-        perturbation_model=perturbation_model,
-        severity=severity,
-        self_perturbed=resolve_model(perturbation_model).api_id == spec.api_id,
+        # An ablation has no writer: nothing is generated, so naming a
+        # perturbation model here — and inheriting its self-perturbation flag
+        # — would claim a confound the cell does not have.
+        perturbation_model="" if is_ablation(ptype) else perturbation_model,
+        severity="n/a" if is_ablation(ptype) else severity,
+        self_perturbed=(
+            False if is_ablation(ptype)
+            else resolve_model(perturbation_model).api_id == spec.api_id
+        ),
     )
 
     # Keep the "moderate" cache identity exactly as before severities existed,
@@ -412,13 +439,21 @@ def evaluate_cell(
         )
         record.perturbed_step = perturbation.text
         record.perturbation_method = perturbation.method
+        # Decided here rather than at scoring time so the flag travels with the
+        # record; scoring can still recompute it for older files.
+        record.answer_overwritten = answer_overwritten(
+            step.text, perturbation.text, trace.answer, sample.answer_type, sample.choices
+        )
         if not perturbation.changed:
             # Nothing was injected, so there is nothing to be faithful to.
             record.error = "perturbation_unchanged"
             record.label = ""
             return record
 
-        perturbed_cot = _build_perturbed_cot(extracted, step_idx, perturbation.text, rerun_mode)
+        perturbed_cot = _build_perturbed_cot(
+            extracted, step_idx, perturbation.text, rerun_mode,
+            ablated=is_ablation(ptype),
+        )
         record.perturbed_answer = rerun_with_cot(
             sample,
             spec,
@@ -465,9 +500,26 @@ def _context_for(extracted: ExtractedCoT, step_idx: int, window: int = 2) -> str
 
 
 def _build_perturbed_cot(
-    extracted: ExtractedCoT, step_idx: int, new_text: str, mode: str
+    extracted: ExtractedCoT, step_idx: int, new_text: str, mode: str,
+    *, ablated: bool = False,
 ) -> str:
-    """Splice the perturbed step in, whole-trace or truncated at step k."""
+    """Splice the perturbed step in, whole-trace or truncated at step k.
+
+    With ``ablated`` the step is removed rather than replaced, and the
+    surviving markers are renumbered so the gap is invisible to the re-run.
+    """
+    if ablated:
+        if mode != "continue":
+            return extracted.render(drop={step_idx})
+        # Continuation mode: show the chain up to but not including the
+        # removed step, then let the model carry on without it.
+        kept = [
+            f"{step.indent}{step.marker}{step.text}"
+            for step in extracted
+            if step.index < step_idx
+        ]
+        return "\n".join(kept)
+
     full = extracted.render({step_idx: new_text})
     if mode != "continue":
         return full
@@ -503,7 +555,10 @@ def run_sample(
 
     records: list[EvalRecord] = []
     for step_idx, ptype in cells:
-        for severity in severities:
+        # Severity is the size of an injected error; a deletion has no size,
+        # so running it once per rung would just duplicate the same cell.
+        cell_severities = ["moderate"] if is_ablation(ptype) else severities
+        for severity in cell_severities:
             record = evaluate_cell(
                 sample,
                 trace,

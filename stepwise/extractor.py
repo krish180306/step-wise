@@ -108,19 +108,36 @@ class ExtractedCoT:
                 return s
         raise IndexError(f"no step with index {index} (have 1..{len(self.steps)})")
 
-    def render(self, overrides: dict[int, str] | None = None) -> str:
+    def render(
+        self,
+        overrides: dict[int, str] | None = None,
+        *,
+        drop: "set[int] | list[int] | tuple[int, ...] | None" = None,
+    ) -> str:
         """Rebuild the trace, substituting text for the given step indices.
 
-        ``render()`` with no overrides returns ``self.raw`` unchanged.
+        ``render()`` with no arguments returns ``self.raw`` unchanged.
+
+        ``drop`` removes those steps from the trace entirely, which is the
+        ablation intervention: it asks whether the answer survives the step's
+        *absence* rather than whether it follows an injected error. Surviving
+        numeric markers are renumbered so the chain still reads 1, 2, 3 — a
+        gap at "Step 1, Step 3" is a visible tell that something was taken
+        out, and a model that spots it is answering a different question than
+        the one the ablation means to ask.
         """
         overrides = overrides or {}
-        unknown = set(overrides) - {s.index for s in self.steps}
+        drop = set(drop or ())
+        known = {s.index for s in self.steps}
+        unknown = (set(overrides) | drop) - known
         if unknown:
             raise IndexError(f"cannot override nonexistent step(s): {sorted(unknown)}")
+        kept = [s for s in self.steps if s.index not in drop]
         parts = [self.preamble]
-        for s in self.steps:
+        for position, s in enumerate(kept, start=1):
             text = overrides.get(s.index, s.text)
-            parts.append(f"{s.indent}{s.marker}{text}{s.trailing}")
+            marker = _renumber_marker(s.marker, position) if drop else s.marker
+            parts.append(f"{s.indent}{marker}{text}{s.trailing}")
         return "".join(parts)
 
     def step_texts(self) -> list[str]:
@@ -128,6 +145,21 @@ class ExtractedCoT:
 
     def to_dict(self) -> dict:
         return {"style": self.style, "steps": [s.to_dict() for s in self.steps]}
+
+
+_MARKER_NUMBER_RE = re.compile(r"\d+")
+
+
+def _renumber_marker(marker: str, position: int) -> str:
+    """Rewrite a marker's number to ``position``, leaving its shape alone.
+
+    "Step 3: " becomes "Step 2: " and "3. " becomes "2. ", while a bullet or
+    an unnumbered marker is returned untouched. Only used when steps have been
+    dropped, so an ordinary render is byte-identical to the source.
+    """
+    if not marker or not _MARKER_NUMBER_RE.search(marker):
+        return marker
+    return _MARKER_NUMBER_RE.sub(str(position), marker, count=1)
 
 
 # --------------------------------------------------------------------------
@@ -160,6 +192,17 @@ def splice_step(cot: str | ExtractedCoT, step_index: int, new_text: str) -> str:
     """
     extracted = cot if isinstance(cot, ExtractedCoT) else extract_steps(cot)
     return extracted.render({step_index: new_text})
+
+
+def ablate_step(cot: str | ExtractedCoT, step_index: int) -> str:
+    """Return ``cot`` with step ``step_index`` removed and the rest renumbered.
+
+    The ablation counterpart to :func:`splice_step`: instead of corrupting the
+    step, it deletes it, so the re-run measures whether the step was *needed*
+    rather than whether an error in it propagates.
+    """
+    extracted = cot if isinstance(cot, ExtractedCoT) else extract_steps(cot)
+    return extracted.render(drop={step_index})
 
 
 def splice_steps(cot: str | ExtractedCoT, replacements: dict[int, str]) -> str:

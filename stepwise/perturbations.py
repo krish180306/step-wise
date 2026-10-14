@@ -28,6 +28,11 @@ LOGICAL_ERROR = "logical_error"
 ARITHMETIC_CHANGE = "arithmetic_change"
 IRRELEVANT_NOISE = "irrelevant_noise"
 
+#: The ablation. Not a corruption: it removes the step instead of breaking it.
+#: Kept out of :data:`PERTURBATION_TYPES` on purpose — see
+#: :data:`ABLATION_TYPES` below for why that separation matters.
+STEP_DELETION = "step_deletion"
+
 _SHARED_RULES = """
 Output rules, which override anything else:
 - Return ONLY the rewritten step. No preamble, no explanation, no quotes, no
@@ -348,6 +353,35 @@ PERTURBATIONS: dict[str, PerturbationSpec] = {
 
 PERTURBATION_TYPES = tuple(PERTURBATIONS)
 
+#: Interventions that *remove* reasoning rather than corrupt it.
+#:
+#: Deliberately **not** part of :data:`PERTURBATION_TYPES`. Three reasons, and
+#: all three are about not quietly changing what an existing number means:
+#:
+#: 1. ``PERTURBATION_TYPES`` is the default cell grid, so adding to it would
+#:    change the cost and the contents of every default run.
+#: 2. :mod:`stepwise.mech` iterates these types to build its own grid; an
+#:    ablation has no corrupted *text* for a log-prob comparison to score.
+#: 3. A ``follows`` label means something different here. Under corruption it
+#:    means "the model carried an injected error through". Under ablation it
+#:    means "the step was **necessary**" — the answer could not be reached
+#:    without it. Pooling the two would make ``dependency`` a mixture of two
+#:    different claims. :func:`stepwise.score.necessity_report` reads these
+#:    cells instead.
+ABLATION_TYPES = (STEP_DELETION,)
+
+#: Every intervention the pipeline can run, corruption and ablation together.
+#: This is what ``--perturbations`` validates against.
+ALL_INTERVENTION_TYPES = PERTURBATION_TYPES + ABLATION_TYPES
+
+#: Human-readable labels, for the dashboard and CLI.
+ABLATION_LABELS = {STEP_DELETION: "Deletion"}
+
+
+def is_ablation(ptype: str) -> bool:
+    """Whether ``ptype`` removes a step rather than corrupting its text."""
+    return ptype in ABLATION_TYPES
+
 
 # --------------------------------------------------------------------------
 # Output cleaning and validation
@@ -436,6 +470,11 @@ def is_applicable(ptype: str, step_text: str) -> bool:
         return bool(_NUMBER_RE.search(step_text))
     if ptype == FACT_SUBSTITUTION:
         return bool(_NUMBER_RE.search(step_text) or _ENTITY_RE.search(step_text))
+    if ptype == STEP_DELETION:
+        # Any non-empty step can be removed. Whether removing it leaves a
+        # usable trace is a question about the chain, not the step, so the
+        # pipeline guards that where it knows how many steps there are.
+        return bool(step_text and step_text.strip())
     return True
 
 
@@ -454,9 +493,32 @@ def _user_prompt(step_text: str, question: str | None, context: str | None) -> s
     return "\n\n".join(parts)
 
 
+def ablate(step_text: str) -> Perturbation:
+    """Remove the step outright. Deterministic, no model call, no cache.
+
+    The empty ``text`` is the signal the pipeline splices on: rather than
+    substituting a corrupted string it drops the step from the trace and
+    renumbers what is left (:meth:`stepwise.extractor.ExtractedCoT.render`).
+
+    Why have an intervention with no error in it at all: every corruption
+    class confounds "the reasoning was load-bearing" with "the model noticed
+    the error and worked around it" — :mod:`stepwise.introspect` shows models
+    sometimes do notice. A deleted step carries nothing to notice. What is
+    left is the cleaner causal question: was this step *needed*?
+    """
+    return Perturbation(
+        type=STEP_DELETION,
+        original=step_text,
+        text="",
+        method="deletion" if (step_text or "").strip() else "unchanged",
+    )
+
+
 def apply_fallback(step_text: str, ptype: str, *, seed: int = 0,
                    severity: str = DEFAULT_SEVERITY) -> Perturbation:
     """Corrupt a step with rules alone. No network, fully deterministic."""
+    if ptype == STEP_DELETION:
+        return ablate(step_text)
     spec = PERTURBATIONS[ptype]
     # Seed off the step text (and severity, when non-default) so the same step
     # always perturbs the same way, and each severity gets its own edit. The
@@ -504,8 +566,15 @@ def perturb_step(
     uncooperative step. ``severity`` scales how large the injected error is, for
     the dose-response ladder.
     """
+    if ptype == STEP_DELETION:
+        # Structural, not generated: there is nothing for a writer model to
+        # write, so this never spends a call or touches the cache. Severity
+        # does not apply either — a step is present or it is not.
+        return ablate(step_text)
     if ptype not in PERTURBATIONS:
-        raise ValueError(f"unknown perturbation type {ptype!r}; expected one of {PERTURBATION_TYPES}")
+        raise ValueError(
+            f"unknown perturbation type {ptype!r}; expected one of {ALL_INTERVENTION_TYPES}"
+        )
     if client is None:
         return apply_fallback(step_text, ptype, severity=severity)
 
@@ -588,9 +657,15 @@ def irrelevant_noise(step_text: str, **kwargs) -> Perturbation:
     return perturb_step(step_text, IRRELEVANT_NOISE, **kwargs)
 
 
+def step_deletion(step_text: str, **kwargs) -> Perturbation:
+    """Remove the step from the chain instead of corrupting it."""
+    return ablate(step_text)
+
+
 PERTURBATION_FUNCTIONS = {
     FACT_SUBSTITUTION: fact_substitution,
     LOGICAL_ERROR: logical_error,
     ARITHMETIC_CHANGE: arithmetic_change,
     IRRELEVANT_NOISE: irrelevant_noise,
+    STEP_DELETION: step_deletion,
 }

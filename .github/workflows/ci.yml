@@ -40,6 +40,24 @@ jobs:
         run: |
           python -c "import stepwise.pipeline, stepwise.score, stepwise.stats, stepwise.domains"
           python -c "import stepwise.battery, stepwise.battery_score, stepwise.mech"
-          python -c "import stepwise.validation, stepwise.judge"
+          python -c "import stepwise.validation, stepwise.judge, stepwise.leakage"
+          python -c "import stepwise.interactions"
           python -c "import stepwise.agent.verifier, stepwise.mcp_server"
           python -c "from stepwise.dashboard.app import app"
+
+      # The review guide answers questions with exact file:line references, and
+      # a stale one sends a reader to the wrong function. Fail the build rather
+      # than let them rot: `python docs/check_review_guide.py --fix` re-points
+      # the drifted ones.
+      - name: Check the review guide's line references
+        run: python docs/check_review_guide.py
+
+      # A simulated run exercises the CLI end to end with no key: the pipeline,
+      # scoring, the report card, and the sizing planner.
+      - name: Smoke-test the CLI offline
+        run: |
+          python main.py demo
+          python main.py score --dataset demo
+          python main.py power --dataset demo
+          python main.py report --dataset demo
+          python main.py benchmark

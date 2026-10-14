@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 from stepwise.config import (
+    ALL_INTERVENTION_TYPES,
     ANALYST_MODEL,
     DATASETS,
     DEFAULT_TARGET_MODELS,
@@ -27,7 +28,7 @@ from stepwise.config import (
 )
 from stepwise.llm import LLMClient, load_dotenv
 
-COMMANDS = ("run", "benchmark", "battery", "mech", "mcp", "verify", "validate", "judge", "introspect", "report", "demo", "analyse", "analyze", "ask", "score", "dashboard", "models")
+COMMANDS = ("run", "benchmark", "battery", "mech", "interactions", "mcp", "verify", "validate", "judge", "introspect", "report", "demo", "analyse", "analyze", "ask", "score", "power", "dashboard", "models")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -55,7 +56,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--n_samples", "--n-samples", type=int, default=50, dest="n_samples",
                         help="questions to sample from the dataset")
     parser.add_argument("--perturbations", default=",".join(PERTURBATION_TYPES),
-                        help="comma-separated perturbation classes")
+                        help=f"comma-separated intervention classes from "
+                             f"{', '.join(ALL_INTERVENTION_TYPES)}. 'step_deletion' is the "
+                             f"ablation arm (remove the step instead of corrupting it); it is "
+                             f"off by default and scored separately")
     parser.add_argument("--severities", default="moderate",
                         help="edit sizes per cell for the dose-response ladder, e.g. "
                              "minimal,moderate,severe (default: moderate)")
@@ -93,6 +97,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", default=None, help="results file path")
     parser.add_argument("--brief", default="", help="extra instructions for the analyst agent")
     parser.add_argument("--question", "-q", default="", help="question for the ask command")
+    parser.add_argument("--with-pairs", action="store_true",
+                        help="run: also run the pair probe straight after, targeted at the "
+                             "steps this run found did nothing on their own. Saves issuing a "
+                             "second command in the right order; opt-in because pairs are "
+                             "quadratic and cost extra calls")
+    parser.add_argument("--max-pairs", type=int, default=6,
+                        help="interactions: pairs to run per question per class. Pairs are "
+                             "quadratic, so this caps the grid")
+    parser.add_argument("--pair-perturbations", default="arithmetic_change",
+                        help="interactions: which classes to run pairs for (comma-separated)")
+    parser.add_argument("--untargeted", action="store_true",
+                        help="interactions: sample pairs at random instead of targeting the "
+                             "steps whose single-step cells both came back 'ignores'")
+    parser.add_argument("--effect", default="0.40,0.25",
+                        help="power: the follow-rate and the control rate to separate, "
+                             "e.g. 0.40,0.25")
+    parser.add_argument("--target-power", type=float, default=0.80,
+                        help="power: desired power (0.7, 0.8, 0.9, 0.95)")
+    parser.add_argument("--alpha", type=float, default=0.05,
+                        help="power: two-sided significance level (0.10, 0.05, 0.01)")
     parser.add_argument("--host", default="127.0.0.1", help="dashboard host")
     parser.add_argument("--port", type=int, default=8000, help="dashboard port")
     parser.add_argument("--reload", action="store_true", help="dashboard autoreload")
@@ -117,6 +141,13 @@ def _require_key(models: list[str]) -> None:
 def cmd_run(args) -> int:
     if args.dataset not in DATASETS:
         sys.exit(f"Unknown dataset {args.dataset!r}. Choose one of: {', '.join(DATASETS)}")
+    requested = [p.strip() for p in args.perturbations.split(",") if p.strip()]
+    unknown = [p for p in requested if p not in ALL_INTERVENTION_TYPES]
+    if unknown:
+        sys.exit(
+            f"Unknown intervention class(es): {', '.join(unknown)}.\n"
+            f"Choose from: {', '.join(ALL_INTERVENTION_TYPES)}"
+        )
     config = RunConfig(
         dataset=args.dataset,
         models=[m.strip() for m in args.models.split(",") if m.strip()],
@@ -142,13 +173,27 @@ def cmd_run(args) -> int:
         f"Stepwise · {config.dataset} · {len(config.models)} models · "
         f"{config.n_samples} questions · {len(config.perturbation_types)} classes"
     )
-    result = run_evaluation(config)
+    # Built here rather than inside run_evaluation so the pair probe below can
+    # reuse the same samples and the same warm cache, instead of re-loading the
+    # dataset and re-paying for perturbations this run already fetched.
+    client = samples = None
+    if args.with_pairs:
+        from stepwise.datasets import load_samples
+        from stepwise.llm import LLMClient
+
+        client = LLMClient(use_cache=config.use_cache)
+        samples = list(load_samples(config.dataset, n=config.n_samples,
+                                    seed=config.seed, subtask=config.bbh_subtask))
+    result = run_evaluation(config, client=client, samples=samples)
     path = result.save()
     print(f"\nResults written to {path}")
 
     table = score.faithfulness_scores(result.records)
     print("\nFaithfulness = (ignores + corrects) / n\n")
     print(score.format_table(table))
+
+    _print_tautology(score.tautology_report(result.records))
+    _print_necessity(score.necessity_report(result.records))
 
     # The probe set has ground-truth critical steps, so report the real
     # sensitivity/specificity the other datasets cannot give.
@@ -189,6 +234,33 @@ def cmd_run(args) -> int:
         if cap["correlation"] is not None:
             print(f"  Pearson r = {cap['correlation']} across {cap['n_models']} models "
                   f"(indicative; sharpens with more models)")
+
+    # The pair probe, chained onto the same command. It needs this run's
+    # single-step labels to decide which pairs are worth testing, so running it
+    # here — with the records already in memory — is both cheaper and simpler
+    # than making the user issue a second command in the right order.
+    if args.with_pairs:
+        from stepwise.interactions import (format_interactions, run_interactions,
+                                           save_interactions)
+
+        # Narrow by default, and to the same classes the standalone
+        # `interactions` command uses. Pairs are quadratic, so running every
+        # class here would quietly multiply the run's cost several-fold;
+        # --pair-perturbations widens it deliberately.
+        pair_types = [t.strip() for t in args.pair_perturbations.split(",") if t.strip()]
+        pair_types = [t for t in pair_types if t != "step_deletion"]
+        print(f"\n{'=' * 62}\nPair probe — two steps at once\n{'=' * 62}")
+        pairs = run_interactions(
+            samples, config, client,
+            perturbation_types=pair_types or ["arithmetic_change"],
+            prior_records=[r.to_dict() for r in result.records],
+            max_pairs=args.max_pairs,
+        )
+        if pairs:
+            pair_path = path.with_name(f"{path.stem}.interactions.jsonl")
+            save_interactions(pairs, pair_path)
+            print(f"\n{len(pairs)} pair records written to {pair_path.name}\n")
+            print(format_interactions(pairs))
 
     print(f"\nNext: python main.py analyse --dataset {config.dataset}")
     return 0
@@ -317,6 +389,13 @@ def cmd_mech(args) -> int:
         print(f"  [{i}/{len(samples)}] {s.question_id}: {len(effects)} effects so far")
 
     path = Path(args.output) if args.output else RESULTS_DIR / f"{args.dataset}.mech.jsonl"
+    # The companion sidecars have to sit beside the same run as the main one,
+    # not beside the dataset. With --output pointing at another run's file
+    # (which is how you attach a mechanistic track to a run whose name is not
+    # a dataset), deriving these from --dataset would scatter the three
+    # outputs across two runs and the dashboard would find none of them.
+    stem = path.name[: -len(".mech.jsonl")] if path.name.endswith(".mech.jsonl") else path.stem
+    out_dir = path.parent
     save_effects(effects, path)
     print(f"\n{len(effects)} step-effects written to {path}")
 
@@ -331,7 +410,7 @@ def cmd_mech(args) -> int:
     # A2: the honest validation — same model on both sides.
     if args.validate and local_labels:
         import json as _json
-        (RESULTS_DIR / f"{args.dataset}.mech_behav.jsonl").write_text(
+        (out_dir / f"{stem}.mech_behav.jsonl").write_text(
             "\n".join(_json.dumps(r) for r in local_labels) + "\n", encoding="utf-8")
         ag = agreement(effects, local_labels, by_key=("question_id", "step_idx"))
         if ag["agrees"] is not None:
@@ -342,7 +421,7 @@ def cmd_mech(args) -> int:
 
     # Activation patching: the causal-tracing curve.
     if args.patch and patches:
-        ppath = RESULTS_DIR / f"{args.dataset}.patch.jsonl"
+        ppath = out_dir / f"{stem}.patch.jsonl"
         save_patch_effects(patches, ppath)
         curve = patch_curve(patches)
         print(f"\nactivation patching · {curve['n_cells']} cells traced -> {ppath.name}")
@@ -350,7 +429,7 @@ def cmd_mech(args) -> int:
             bar = "#" * int(max(0, min(1, row["restoration"])) * 30)
             print(f"  layer {row['layer']:>2}  {row['restoration']:+.2f} {bar}")
 
-    beh_path = RESULTS_DIR / f"{args.dataset}.jsonl"
+    beh_path = out_dir / f"{stem}.jsonl"
     if beh_path.exists():
         ag = agreement(effects, load_records(beh_path))
         if ag["agrees"] is not None:
@@ -373,6 +452,70 @@ def _mech_elicit(model, sample):
     answer = extract_answer(text, sample.answer_type, sample.choices, sample.question)
     lines = [ln for ln in text.splitlines() if not _re.match(r"^\s*\**\s*(final\s+)?answer\b", ln, _re.I)]
     return "\n".join(lines).strip(), answer
+
+
+def cmd_interactions(args) -> int:
+    """Pair interventions: the redundancy a single-step probe cannot see.
+
+    Corrupting one step at a time cannot distinguish "this reasoning does no
+    work" from "this reasoning is done twice, so removing either half changes
+    nothing". This runs both steps of a pair together and compares the result
+    against the two single-step outcomes already in the run.
+    """
+    if args.dataset not in DATASETS:
+        sys.exit(f"Unknown dataset {args.dataset!r}. Choose one of: {', '.join(DATASETS)}")
+    types = [t.strip() for t in args.pair_perturbations.split(",") if t.strip()]
+    unknown = [t for t in types if t not in ALL_INTERVENTION_TYPES]
+    if unknown:
+        sys.exit(f"Unknown intervention class(es): {', '.join(unknown)}.\n"
+                 f"Choose from: {', '.join(ALL_INTERVENTION_TYPES)}")
+
+    from stepwise.interactions import (format_interactions, run_interactions,
+                                       save_interactions)
+    from stepwise.datasets import load_samples
+    from stepwise.llm import LLMClient
+    from stepwise.pipeline import load_records
+
+    config = RunConfig(
+        dataset=args.dataset,
+        models=[m.strip() for m in args.models.split(",") if m.strip()],
+        n_samples=args.n_samples,
+        perturbation_model=args.perturbation_model,
+        max_steps_per_sample=args.max_steps,
+        use_reference_cot=args.use_reference_cot or args.dataset == "probe",
+        bbh_subtask=args.bbh_subtask,
+        seed=args.seed,
+        use_cache=not args.no_cache,
+    )
+    _require_key(config.models + [config.perturbation_model])
+
+    # The single-step run is what makes this targeted: pairs are drawn from the
+    # steps that individually did nothing, because that is where a backup path
+    # can hide. Without one the probe still runs, just blind and more expensive.
+    base = Path(args.output) if args.output else RESULTS_DIR / f"{args.dataset}.jsonl"
+    prior = [] if args.untargeted else load_records(base)
+    if args.untargeted:
+        print("Untargeted: sampling pairs at random.")
+    elif prior:
+        print(f"Targeting pairs from {len(prior)} single-step cells in {base.name}")
+    else:
+        print(f"No single-step run at {base.name} — pairs will be sampled at random, "
+              f"and without single-step labels they cannot be classified.\n"
+              f"Run `python main.py --dataset {args.dataset}` first for the targeted probe.")
+
+    samples = load_samples(args.dataset, n=args.n_samples, seed=args.seed,
+                           subtask=args.bbh_subtask)
+    client = LLMClient(use_cache=config.use_cache)
+    records = run_interactions(samples, config, client, perturbation_types=types,
+                               prior_records=prior, max_pairs=args.max_pairs)
+
+    out = base.with_name(f"{base.stem}.interactions.jsonl")
+    save_interactions(records, out)
+    print(f"\n{len(records)} pair records written to {out}")
+    print()
+    print(format_interactions(records))
+    print(f"\n{client.stats['api_calls']} API calls, {client.stats['hits']} cache hits.")
+    return 0
 
 
 def cmd_mcp(args) -> int:
@@ -495,8 +638,70 @@ def cmd_demo(args) -> int:
     path = result.save()
     print(f"\nResults written to {path}")
     print("\n" + score.format_table(score.by_perturbation(result.records)))
+
+    _write_demo_sidecars(result, path, verbose=True)
+
+    # The in-repo benchmark too, where each chain's critical step is known, so
+    # the probe panel can show a real sensitivity/control split without a key.
+    # Every model reasons over the same authored chain.
+    if args.demo_dataset == "all":
+        from stepwise import probe_score
+
+        probe_result = run_demo(dataset="probe", n_samples=max(12, args.n_samples))
+        probe_path = probe_result.save(RESULTS_DIR / "probe.jsonl")
+        print(f"\nProbe-set run written to {probe_path.name}")
+        print("\n" + probe_score.format_probe(probe_result.records))
+        # The probe run is a run like any other, so it gets the same sidecars.
+        # Without them its panels sit empty and the only way to fill them is a
+        # command that needs the API key this demo exists to avoid needing.
+        _write_demo_sidecars(probe_result, probe_path, verbose=False)
+
     print("\nNow: python main.py dashboard")
     return 0
+
+
+def _write_demo_sidecars(result, path, *, verbose: bool) -> None:
+    """Write every sidecar panel the dashboard reads, for one simulated run.
+
+    The battery, the self-knowledge probe and the pair arm are separate
+    commands on a real run because each costs API calls. Here they cost
+    nothing, so a demo writes all of them — otherwise half the dashboard sits
+    empty and the only way to fill it is the key this demo exists to avoid
+    needing.
+    """
+    import json as _json
+
+    from stepwise.battery import save_battery
+    from stepwise.battery_score import format_battery
+    from stepwise.demo import run_demo_battery, run_demo_introspect, run_demo_pairs
+    from stepwise.interactions import format_interactions, save_interactions
+    from stepwise.introspect import format_introspection
+
+    def _say(header: str, body: str) -> None:
+        if verbose:
+            print(f"\n{header}\n")
+            print(body)
+        else:
+            print(f"  {header}")
+
+    pairs = run_demo_pairs(result)
+    if pairs:
+        save_interactions(pairs, path.with_name(f"{path.stem}.interactions.jsonl"))
+        _say(f"{len(pairs)} pair records -> {path.stem}.interactions.jsonl",
+             format_interactions(pairs))
+
+    battery = run_demo_battery(result, progress=None)
+    if battery:
+        save_battery(battery, path.with_name(f"{path.stem}.battery.jsonl"))
+        _say(f"{len(battery)} battery records -> {path.stem}.battery.jsonl",
+             format_battery(battery))
+
+    introspection = run_demo_introspect(result, limit=160, progress=None)
+    if introspection:
+        path.with_name(f"{path.stem}.introspect.jsonl").write_text(
+            "\n".join(_json.dumps(r) for r in introspection) + "\n", encoding="utf-8")
+        _say(f"{len(introspection)} introspection records -> "
+             f"{path.stem}.introspect.jsonl", format_introspection(introspection))
 
 
 def cmd_analyse(args) -> int:
@@ -574,6 +779,122 @@ def cmd_score(args) -> int:
     ):
         print(f"\n--- {title} ---")
         print(score.format_table(table))
+    _print_tautology(score.tautology_report(frame))
+    _print_necessity(score.necessity_report(frame))
+    return 0
+
+
+def _print_tautology(report: dict) -> None:
+    """The gap between the positional proxy and the content-based test."""
+    if not report or not report.get("n_scored"):
+        return
+    pos = report["dependency_positional_filter"]
+    con = report["dependency_content_filter"]
+    print("\nTautology check — how much of 'dependency' was the answer being restated:")
+    print(f"  all steps                        {report['dependency_all_steps']:.1%}")
+    positional = "-  (no cells survive it)" if pos is None else format(pos, ".1%")
+    print(f"  final-step filter (positional)   {positional}")
+    if con is None:
+        # Every scored cell was tautological. That is the loudest possible
+        # version of this finding, so say it rather than printing nothing.
+        print("  answer-overwritten filter        -  NO reasoning cells survive it")
+        print(f"      all {report['n_tautological']} scored cell(s) merely overwrote an "
+              f"answer the step was already displaying, so this run measures no "
+              f"reasoning dependence at all   <- the honest number")
+    else:
+        print(f"  answer-overwritten filter        {con:.1%}   <- the honest number")
+    if report["dependency_tautological_cells"] is not None:
+        print(f"  tautological cells alone         "
+              f"{report['dependency_tautological_cells']:.1%} "
+              f"({report['n_tautological']} of {report['n_scored']} cells)")
+    leaks = report["leaks_outside_final_step"]
+    kept = report["final_steps_without_leak"]
+    if leaks:
+        print(f"  {leaks} tautological cell(s) were NOT the final step — the positional "
+              f"filter counted them as reasoning")
+    if kept:
+        print(f"  {kept} final-step cell(s) did not overwrite an answer — the positional "
+              f"filter was discarding real evidence")
+
+
+def _print_necessity(report: dict) -> None:
+    """The ablation arm, when the run included it."""
+    if not report or not report.get("n_ablation_cells"):
+        return
+    print(f"\nAblation arm — was the step NEEDED? ({report['n_ablation_cells']} deletions)")
+    rate = report.get("necessity_rate_reasoning")
+    if rate is not None:
+        print(f"  necessary (answer moved without it)   {rate:.1%} "
+              f"of {report['n_reasoning_cells']} reasoning steps")
+    tab = report.get("cross_tab") or {}
+    if tab:
+        print(f"  paired against corruption on the same steps ({report['n_paired']} steps):")
+        print(f"    needed AND followed an error      {tab['necessary_and_followed']}")
+        print(f"    needed but did NOT follow         {tab['necessary_not_followed']}"
+              f"   <- depends on it without trusting it")
+        print(f"    not needed yet followed           {tab['redundant_but_followed']}"
+              f"   <- surface reactivity")
+        print(f"    not needed and ignored            {tab['redundant_and_ignored']}")
+        print(f"    agreement                         {tab['agreement']:.1%}")
+
+
+def cmd_power(args) -> int:
+    """How many questions the headline actually needs.
+
+    Reads the clustering parameters off an existing run when there is one, so
+    the answer is specific to this design rather than a textbook number.
+    """
+    from stepwise import score
+    from stepwise import stats as st
+
+    try:
+        p1, p2 = [float(x) for x in args.effect.split(",")]
+    except ValueError:
+        sys.exit("--effect wants two numbers, e.g. --effect 0.40,0.25")
+
+    path = Path(args.output) if args.output else RESULTS_DIR / f"{args.dataset}.jsonl"
+    frame = None
+    if path.exists():
+        frame = score.records_dataframe(path)
+        print(f"Measuring the design from {path}")
+    else:
+        print(f"No run at {path} — using defaults (8 cells/question, ICC 0.3)")
+
+    try:
+        plan = st.power_plan(frame, p1=p1, p2=p2, alpha=args.alpha, power=args.target_power)
+    except ValueError as exc:
+        sys.exit(str(exc))
+
+    measured = plan["measured"]
+    if measured:
+        print(f"\nThis run: {measured['questions']} questions, {measured['cells']} scored "
+              f"cells ({measured['cells_per_question']} per question)")
+        print(f"  intra-cluster correlation (ICC)   {measured['icc']}")
+        if measured.get("observed_follow_rate") is not None:
+            print(f"  observed follow-rate              {measured['observed_follow_rate']:.1%}")
+    current = plan["current_precision"]
+    if current and current.get("half_width") is not None:
+        print(f"\nPrecision it can currently support, at a {current['rate']:.0%} rate:")
+        print(f"  design effect from clustering     {current['design_effect']}x "
+              f"({current['cells']} cells count as {current['effective_n']})")
+        print(f"  95% CI half-width                 +/-{current['half_width']:.1%}  "
+              f"-> {current['ci'][0]:.0%} to {current['ci'][1]:.0%}")
+
+    target = plan["target"]
+    if not target.get("detectable"):
+        print(f"\n{target.get('reason')}")
+        return 0
+    print(f"\nTo separate a {target['p1']:.0%} follow-rate from a {target['p2']:.0%} control "
+          f"at alpha={target['alpha']}, power={target['power']}:")
+    print(f"  cells per arm, if cells were independent   {target['cells_per_arm_independent']}")
+    print(f"  design effect at ICC {target['icc']}                   "
+          f"{target['design_effect']}x")
+    print(f"  cells per arm, clustered                   {target['cells_per_arm']}")
+    print(f"  QUESTIONS NEEDED                           {target['questions']}")
+    print(f"  approx API calls per model                 {target['api_calls_per_model']:,}")
+    print("\nCells from one question share a chain of thought, so they are not "
+          "independent\nobservations; ignoring that under-counts what a run needs by the "
+          "design effect.")
     return 0
 
 
@@ -614,6 +935,7 @@ def main(argv=None) -> int:
         "benchmark": cmd_benchmark,
         "battery": cmd_battery,
         "mech": cmd_mech,
+        "interactions": cmd_interactions,
         "mcp": cmd_mcp,
         "verify": cmd_verify,
         "validate": cmd_validate,
@@ -625,6 +947,7 @@ def main(argv=None) -> int:
         "analyze": cmd_analyse,
         "ask": cmd_ask,
         "score": cmd_score,
+        "power": cmd_power,
         "dashboard": cmd_dashboard,
         "models": cmd_models,
     }

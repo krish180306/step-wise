@@ -25,7 +25,15 @@ from fastapi.staticfiles import StaticFiles
 from .. import score
 from ..agent.chat import SESSIONS, stream_reply
 from ..agent.tools import AnalysisContext
-from ..config import ANALYST_MODEL, LABELS, PERTURBATION_TYPES, RESULTS_DIR, api_key
+from ..config import (
+    ALL_INTERVENTION_TYPES,
+    ANALYST_MODEL,
+    DATASETS,
+    LABELS,
+    PERTURBATION_TYPES,
+    RESULTS_DIR,
+    api_key,
+)
 from ..llm import LLMError
 from ..pipeline import load_records, load_traces
 
@@ -106,7 +114,8 @@ def list_runs() -> dict:
     # Sidecar files (<run>.battery.jsonl, .mech.jsonl, .judge.jsonl) also match
     # *.jsonl but are not runs in their own right — exclude them so they do not
     # appear as phantom runs in the picker.
-    SIDECARS = (".battery", ".mech", ".judge", ".patch", ".introspect", ".mech_behav")
+    SIDECARS = (".battery", ".mech", ".judge", ".patch", ".introspect", ".mech_behav",
+                ".interactions")
     runs = []
     for path in sorted(RESULTS_DIR.glob("*.jsonl"), key=lambda p: -p.stat().st_mtime):
         if any(path.stem.endswith(s) for s in SIDECARS):
@@ -136,7 +145,14 @@ def list_runs() -> dict:
     # never be what the dashboard opens on while real results exist, even if
     # the demo was generated more recently.
     runs.sort(key=lambda r: (bool(r.get("simulated")), -r["modified"]))
-    return {"runs": runs, "labels": list(LABELS), "perturbation_types": list(PERTURBATION_TYPES)}
+    return {"runs": runs, "labels": list(LABELS),
+            "perturbation_types": list(ALL_INTERVENTION_TYPES),
+            # The CLI's --dataset takes a task family, not a run name. The page
+            # needs to know which is which: a run called "demo" or one saved
+            # under a custom --output is not a dataset, so the commands it
+            # suggests for that run have to name a real dataset and redirect
+            # their output, or they exit with "Unknown dataset".
+            "datasets": list(DATASETS)}
 
 
 @app.get("/api/summary")
@@ -580,6 +596,66 @@ def probe(run: str = "probe") -> dict:
     if not summary["per_model"]:
         return {"available": False, **out}
     return {"available": True, **out, **_json_safe(summary)}
+
+
+@app.get("/api/interactions")
+def interactions(run: str) -> dict:
+    """Pair interventions: the redundancy a single-step probe cannot see.
+
+    Reads the ``<run>.interactions.jsonl`` sidecar. Empty unless the run has
+    had ``python main.py interactions`` pointed at it; the main results file
+    is never touched by this.
+    """
+    from ..interactions import interaction_report, load_interactions
+
+    path = _sidecar(run, "interactions.jsonl")
+    if not path.exists():
+        return {"available": False, "run": run}
+    return _json_safe({"available": True, **interaction_report(load_interactions(path))})
+
+
+@app.get("/api/tautology")
+def tautology(run: str) -> dict:
+    """How much of the run's dependency was the answer being restated.
+
+    The positional "final step" proxy against the content-based
+    answer-overwritten test. Computed from the records on demand — every input
+    it needs is already stored, so this works on runs finished long before the
+    test existed.
+    """
+    from .. import score
+
+    frame = score.records_dataframe(_run_path(run))
+    return _json_safe(score.tautology_report(frame))
+
+
+@app.get("/api/necessity")
+def necessity(run: str) -> dict:
+    """The ablation arm: which steps the answer actually needed.
+
+    Empty unless the run opted into ``step_deletion``.
+    """
+    from .. import score
+
+    frame = score.records_dataframe(_run_path(run))
+    return _json_safe(score.necessity_report(frame))
+
+
+@app.get("/api/power")
+def power(run: str, p1: float = 0.40, p2: float = 0.25) -> dict:
+    """How many questions the headline needs, measured off this run's design.
+
+    Reads cells-per-question and the intra-cluster correlation from the run
+    itself, so the sizing answer reflects this design rather than a textbook
+    assumption of independent observations.
+    """
+    from .. import score, stats
+
+    frame = score.records_dataframe(_run_path(run))
+    try:
+        return _json_safe(stats.power_plan(frame, p1=p1, p2=p2))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/api/health")

@@ -19,6 +19,11 @@ uvicorn>=0.27
 # MCP server (expose results to a Claude client). Optional; uses stdio only.
 # mcp>=2.0
 
+# Label regression (logistic model with cluster-robust SEs). Optional: without
+# it `validate` and the dashboard's regression panel report a readable
+# "needs statsmodels" instead of failing.
+# statsmodels>=0.14
+
 # Optional: only needed to swap in another provider
 # openai>=1.30
 # anthropic>=0.30

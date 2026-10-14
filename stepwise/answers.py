@@ -34,6 +34,17 @@ _STEP_MARKER_RE = re.compile(
 NO_ANSWER = ""
 
 
+def numbers_in(text: str) -> list[str]:
+    """Every number-shaped token in ``text``, in order, exactly as written.
+
+    Exposed because :mod:`stepwise.leakage` has to ask the same question this
+    module asks — "which numbers does this text contain?" — and the two must
+    agree. A step would otherwise be judged to state an answer that the
+    extractor would never have read off it.
+    """
+    return [m.group(0) for m in _NUMBER_RE.finditer(text or "")]
+
+
 def extract_answer(
     response: str,
     answer_type: str = SPAN,

@@ -174,6 +174,10 @@ def _reg_records(n_questions=30):
 
 
 def test_regression_finds_the_answer_step_effect():
+    # statsmodels is an optional dependency: label_regression degrades to a
+    # readable error without it (see test_regression_* below, which assert
+    # that path), so skip rather than fail where it is not installed.
+    pytest.importorskip("statsmodels")
     result = validation.label_regression(_reg_records())
     assert "error" not in result, result.get("error")
     answer_step = next(t for t in result["terms"] if t["term"] == "answer_step")
@@ -195,6 +199,7 @@ def test_regression_refuses_no_outcome_variation():
 
 
 def test_format_regression_renders():
+    pytest.importorskip("statsmodels")
     text = validation.format_regression(validation.label_regression(_reg_records()))
     assert "answer_step" in text
     assert "odds ratio" in text

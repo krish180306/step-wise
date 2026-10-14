@@ -1,12 +1,20 @@
 # Stepwise — Project Review Guide
 
 Answers to the questions a reviewer is likely to ask, with the exact
-`file:line` behind every claim. Line numbers are correct as of 2026-09-11.
-If you edit code, re-check with:
+`file:line` behind every claim.
+
+Line numbers rot, and a stale pointer is worse than none — it sends you to a
+plausible but wrong function. So the 22 references that name their symbol are
+machine-checked against the sources:
 
 ```bash
-grep -n "def \|^class " stepwise/*.py stepwise/*/*.py
+python docs/check_review_guide.py          # report drift, exit 1 if any
+python docs/check_review_guide.py --fix    # re-point them in place
 ```
+
+The remaining 52 point at a line inside a function rather than at its
+definition, so they cannot be checked automatically; treat those as
+approximate and search for the quoted code if they miss.
 
 ---
 
@@ -36,16 +44,18 @@ pip install -r requirements.txt
 python main.py demo                                # offline, simulated models, no key
 python main.py --dataset gsm8k --n_samples 50      # a real run
 python main.py score --dataset gsm8k               # print the score tables
+python main.py power --dataset gsm8k               # how many questions the headline needs
+python main.py interactions --dataset gsm8k        # pair probe (needs a single-step run first)
 python main.py analyse --dataset gsm8k             # agent writes a report
 python main.py ask --dataset gsm8k -q "..."        # agent answers one question
 python main.py dashboard                           # http://127.0.0.1:8000
 python main.py models                              # list models + which keys are set
-python -m pytest tests/ -q                         # 276 tests, no network
+python -m pytest tests/ -q                         # 611 tests, no network
 ```
 
-The CLI lives in `main.py`: `build_parser` (33), `cmd_run` (96), `cmd_demo`
-(133), `cmd_analyse` (153), `cmd_ask` (170), `cmd_score` (199),
-`cmd_dashboard` (222), `cmd_models` (230), `main` (245).
+The CLI lives in `main.py`: `build_parser` (34), `cmd_run` (128), `cmd_demo`
+(503), `cmd_analyse` (523), `cmd_ask` (549), `cmd_score` (578), `cmd_power`
+(657), `cmd_dashboard` (717), `cmd_models` (725), `main` (740).
 
 ---
 
@@ -57,23 +67,23 @@ numbers, you can answer most questions.
 
 | # | What happens | Where |
 |---|---|---|
-| 1 | CLI builds a `RunConfig` and calls the pipeline | `main.py:96` → `pipeline.py:476` `run_evaluation` |
-| 2 | Load N questions from HuggingFace, normalised to `Sample` | `datasets.py:282` `load_samples` |
-| 3 | For each model, samples run in a thread pool | `pipeline.py:505` `ThreadPoolExecutor` |
-| 4 | **API call #1 — elicit the baseline CoT** | `pipeline.py:210` `elicit_trace` → `client.complete` at `pipeline.py:229` |
-| 5 | Strip the `Answer:` line out of the CoT | `pipeline.py:256` `split_cot_and_answer` |
-| 6 | Segment the CoT into steps (lossless) | `extractor.py:138` `extract_steps` |
-| 7 | Skip samples with no parseable baseline answer | `pipeline.py:452` |
-| 8 | List the (step, class) cells worth running | `pipeline.py:298` `iter_cells` → `perturbations.py:383` `is_applicable` |
-| 9 | **API call #2 — write the perturbed step** | `pipeline.py:312` `evaluate_cell` → `perturbations.py:428` `perturb_step` → `client.complete` at `perturbations.py:459` |
-| 10 | Clean and validate the rewrite; retry once, else rule-based fallback | `perturbations.py:324` `clean_output`, `:345` `is_valid`, `:412` `apply_fallback` |
-| 11 | Splice the new step in, every other byte unchanged | `pipeline.py:421` `_build_perturbed_cot` → `extractor.py:111` `render` |
-| 12 | **API call #3 — re-run the model on the perturbed CoT** | `pipeline.py:270` `rerun_with_cot` → `client.complete` at `pipeline.py:281` |
-| 13 | Extract and normalise the new answer | `answers.py:37` `extract_answer` |
-| 14 | No parseable answer → cell is **unscored**, not "follows" | `pipeline.py:394` |
-| 15 | Label it follows / ignores / corrects | `pipeline.py:175` `classify` |
-| 16 | Save records (JSONL) + traces (sidecar JSON) | `pipeline.py:565` `RunResult.save` |
-| 17 | Aggregate into scores | `score.py:72` `_aggregate` |
+| 1 | CLI builds a `RunConfig` and calls the pipeline | `main.py:128` → `pipeline.py:580` `run_evaluation` |
+| 2 | Load N questions from HuggingFace, normalised to `Sample` | `datasets.py:453` `load_samples` |
+| 3 | For each model, samples run in a thread pool | `pipeline.py:580` `run_evaluation`, pool opened at line 621 |
+| 4 | **API call #1 — elicit the baseline CoT** | `pipeline.py:238` `elicit_trace` → `client.complete` at `pipeline.py:265` |
+| 5 | Strip the `Answer:` line out of the CoT | `pipeline.py:292` `split_cot_and_answer` |
+| 6 | Segment the CoT into steps (lossless) | `extractor.py:170` `extract_steps` |
+| 7 | Skip samples with no parseable baseline answer | `pipeline.py:550` |
+| 8 | List the (step, class) cells worth running | `pipeline.py:334` `iter_cells` → `perturbations.py:462` `is_applicable` |
+| 9 | **API call #2 — write the perturbed step** | `pipeline.py:364` `evaluate_cell` → `perturbations.py:550` `perturb_step` → `client.complete` at `perturbations.py:593` |
+| 10 | Clean and validate the rewrite; retry once, else rule-based fallback | `perturbations.py:403` `clean_output`, `:345` `is_valid`, `:412` `apply_fallback` |
+| 11 | Splice the new step in, every other byte unchanged | `pipeline.py:502` `_build_perturbed_cot` → `extractor.py:111` `render` |
+| 12 | **API call #3 — re-run the model on the perturbed CoT** | `pipeline.py:306` `rerun_with_cot` → `client.complete` at `pipeline.py:317` |
+| 13 | Extract and normalise the new answer | `answers.py:48` `extract_answer` |
+| 14 | No parseable answer → cell is **unscored**, not "follows" | `pipeline.py:480` |
+| 15 | Label it follows / ignores / corrects | `pipeline.py:203` `classify` |
+| 16 | Save records (JSONL) + traces (sidecar JSON) | `pipeline.py:681` `RunResult.save` |
+| 17 | Aggregate into scores | `score.py:288` `_aggregate` |
 
 ---
 
@@ -83,29 +93,29 @@ numbers, you can answer most questions.
 
 | Line | Provider | Used? |
 |---|---|---|
-| `llm.py:204` — `self.client.chat.completions.create(**kwargs)` | Groq (and OpenAI, same shape) | **Yes — every call in the project** |
-| `llm.py:313` — `self.client.messages.create(**kwargs)` | Anthropic | Only if a Claude model is named on the CLI |
+| `llm.py:207` — `self.client.chat.completions.create(**kwargs)` | Groq (and OpenAI, same shape) | **Yes — every call in the project** |
+| `llm.py:318` — `self.client.messages.create(**kwargs)` | Anthropic | Only if a Claude model is named on the CLI |
 
-Both are wrapped in `_with_retries` (`llm.py:362`).
+Both are wrapped in `_with_retries` (`llm.py:367`).
 
 Nothing calls those directly. Everything goes through one front door,
-**`LLMClient.complete`** (`llm.py:441`), which checks the disk cache first and
+**`LLMClient.complete`** (`llm.py:458`), which checks the disk cache first and
 only then picks a provider. The callers of `LLMClient.complete`:
 
 | Caller | Purpose |
 |---|---|
-| `pipeline.py:229` | baseline CoT elicitation |
-| `pipeline.py:281` | re-run on the perturbed CoT |
-| `perturbations.py:459` | perturbation writer |
+| `pipeline.py:265` | baseline CoT elicitation |
+| `pipeline.py:317` | re-run on the perturbed CoT |
+| `perturbations.py:593` | perturbation writer |
 | `agent/analyst.py:196`, `:246` | report agent (tool-calling turn, final forced answer) |
 | `agent/chat.py:253`, `:305` | chat agent (tool-calling turn, final forced answer) |
 
 The other network access is HuggingFace dataset download,
-`datasets.py:76` `_try_load`.
+`datasets.py:78` `_try_load`.
 
-**The API key** is read from the environment by `config.py:184` `api_key`,
-loaded from `.env` by `llm.py:507` `load_dotenv`, and the Groq SDK client is
-built lazily in `llm.py:246` `GroqProvider._make_client`. `.env` is in
+**The API key** is read from the environment by `config.py:201` `api_key`,
+loaded from `.env` by `llm.py:524` `load_dotenv`, and the Groq SDK client is
+built lazily in `llm.py:249` `GroqProvider._make_client`. `.env` is in
 `.gitignore`.
 
 ---
@@ -360,7 +370,7 @@ back to real data.
 | `follows` | new answer ≠ original, ≠ gold (202) | the model carried the error through |
 
 An empty or unparseable new answer is **not labelled** — it's recorded as
-`error = "unparseable_answer"` (`pipeline.py:394`) and reported in coverage.
+`error = "unparseable_answer"` (`pipeline.py:480`) and reported in coverage.
 
 ### The formulas — `score.py:87–88`
 
@@ -403,6 +413,118 @@ definition working, not a bug. Documented at `pipeline.py:185–196`.
 `irrelevant_noise` changes nothing about the reasoning — it adds one unrelated
 sentence. A model that "follows" it is reacting to surface change, not
 reasoning, and that undercuts all its other numbers. Read that column first.
+
+---
+
+## 6a. The four controls added on top
+
+These exist because the original versions of each were measurably wrong or
+missing. Each is the kind of thing a reviewer asks about, so know the *reason*
+rather than the API.
+
+### The tautology control: positional -> content-based (`leakage.py`)
+
+**The problem.** Corrupting the step that *states* the answer moves the answer
+for free, so every "reasoning steps only" figure removes those cells. That was
+decided by position — `is_answer_step = step_idx >= n_steps`, "the last step" —
+and position is wrong in both directions:
+
+| case | positional says | truth |
+|---|---|---|
+| answer computed at step 3 of 6, then checked | reasoning | **tautology** — the proxy inflated the headline |
+| chain ends "Therefore we compare the two totals" | tautology | **evidence** — the proxy threw it away |
+| noise inserted into the answer-stating step | tautology | **evidence** — the answer is still on the page |
+
+**The fix.** `leakage.step_states_answer` asks whether the step *contains* the
+baseline answer, per answer type and using the extractor's own notion of
+"contains" (a bare capital `B` is an initial, not option B; short spans get a
+length floor). `leakage.answer_overwritten` then asks the question that
+actually matters: did the corruption **take that answer away**? If it did, the
+perturbed trace now shows a different answer for the re-run to copy and the
+cell proves nothing.
+
+`score.add_tautology_flags` puts `states_answer`, `answer_overwritten` and
+`tautological` on the frame; `score._reasoning_only` is the single filter all
+six former call sites now route through.
+
+**Two things to be ready for.** First, it costs nothing to adopt: every input
+it needs is already in each record, so `python main.py score` recomputes it
+over old runs with no API calls. Second, backwards compatibility is **per
+row** — a record that stored no step texts cannot be decided by content, so it
+falls back to the positional proxy and its old numbers are unchanged.
+`score.tautology_report` reports both filters side by side, plus
+`leaks_outside_final_step` and `final_steps_without_leak`, so the gap is
+measured rather than asserted.
+
+### The ablation arm: necessity, not error propagation (`step_deletion`)
+
+Every corruption class injects an error, which confounds two things the label
+cannot separate: the reasoning was load-bearing, and the model **noticed** the
+error and routed around it (`introspect.py` shows they sometimes do). Deleting
+a step injects nothing to notice.
+
+- `perturbations.ablate` returns empty text; `ExtractedCoT.render(drop=...)`
+  removes the step and **renumbers** the survivors, because "Step 1, Step 3" is
+  a visible tell.
+- No model call and no cache entry — it is a structural edit, so the arm costs
+  one re-run per cell and carries no writer, hence no self-perturbation
+  confound.
+- It is **not** a default class. Default runs cost and contain what they always
+  did, `mech.py` (which iterates the four) is untouched, and — the real reason
+  — `follows` means "the step was **necessary**" here, so pooling the arms
+  would make `dependency` a mixture of two claims. `score._corruption_only`
+  keeps them apart and `score.necessity_report` reads the arm on its own terms.
+
+The cross-tab against the corruption cells on the same steps is the point:
+*needed but did not follow* is a model depending on a step without blindly
+trusting it, and *not needed yet followed* is surface reactivity.
+
+### The pair probe: redundancy vs unfaithfulness (`interactions.py`)
+
+One intervention at a time has a blind spot that is a property of the design,
+not the sample size. A chain with **two routes** to the answer survives either
+route being broken, so the single-step probe records `ignores` twice and reads
+inert reasoning where the reasoning was load-bearing twice over.
+
+- `classify_interaction` places a pair against its two single-step outcomes.
+  **synergistic** (neither alone, both together) is the finding; the others are
+  additive, masked and inert.
+- Know this detail: `corrects` counts as *the answer moved*. It moved to gold,
+  but it moved. Folding it in with `ignores` would mark a pair synergistic on
+  the strength of a step that demonstrably moves the answer alone — the exact
+  false positive the probe exists to avoid.
+- `choose_pairs` is why it is affordable. Pairs are quadratic, so the grid is
+  subsampled deterministically and, by default, **targeted**: drawn only from
+  steps whose single-step cells both came back `ignores`. A pair containing a
+  step that already moves the answer can only come out `additive`, so targeting
+  is cheaper *and* sharper than a random sweep.
+- `synergy_rate`'s denominator is the **eligible** pairs (both singles
+  `ignores`), not all pairs — including pairs that could never have been
+  synergistic would deflate the rate for free.
+- Records go to `<run>.interactions.jsonl` and never into the main results, so
+  no existing score changes when you run it.
+
+**The honest limit to state before you are asked:** a chain with *three* routes
+needs triples, and that grid is cubic. The pair probe bounds the problem rather
+than closing it, so a zero synergy rate is evidence against two-way redundancy
+only.
+
+### Sizing: the design effect (`stats.py`, `main.py power`)
+
+The unit of sampling is the **question**, not the cell — a question's cells
+share one chain of thought. The textbook two-proportion formula assumes
+independence and so under-sizes a run here.
+
+- `stats.observed_icc` estimates the intra-cluster correlation off the run
+  (one-way ANOVA on the 0/1 follow indicator).
+- `stats.design_effect` is `1 + (m-1)*icc`. At 8 cells a question that is 2.1x
+  at an ICC of 0.15 and 4.2x at 0.45.
+- `stats.required_questions` inflates the sample size by it;
+  `stats.precision_for` inverts it into the CI half-width a given run supports.
+
+`python main.py power --dataset <run>` reads both parameters off the data, so
+the answer is specific to this design. This is the one limitation the project
+could previously only shrug at.
 
 ---
 
@@ -464,11 +586,11 @@ agent's work visible instead of a spinner.
 | Why temperature 0? | Reproducibility. The perturbation retry uses 0.6 only to escape a bad first attempt. |
 | Why rule-based fallbacks? | So one uncooperative step never stalls a run. `perturbation_quality` reports the mix, because fallback edits are cruder. |
 | Why skip inapplicable cells? | An arithmetic perturbation of a step with no numbers isn't evidence about arithmetic, and it would inflate the denominator. |
-| Why thread over samples, not steps? | Steps share one trace, and firing the whole grid at one model at once just hits the rate limit. `pipeline.py:505`. |
+| Why thread over samples, not steps? | Steps share one trace, and firing the whole grid at one model at once just hits the rate limit. `pipeline.py:621`. |
 | Why FastAPI + HTML, not Streamlit? | Streamlit's widgets would override the Stepwise design. |
 | Why cache on disk? | An interrupted run resumes for free; re-scoring costs nothing. |
 
-### How caching is keyed (`llm.py:441`, `pipeline.py`)
+### How caching is keyed (`llm.py:458`, `pipeline.py`)
 
 | Call | Key parts |
 |---|---|
@@ -493,17 +615,17 @@ review, because it shows the testing actually caught things.
 |---|---|---|
 | Llama 3.3 70B / 3.1 8B return **404** on the free tier | queried the key's real model list; new lineup | `config.py:71` |
 | **gpt-oss-20b calls a built-in python tool** on every arithmetic question (tried low reasoning effort, temperature 0.6, explicit instructions) — Groq rejects it | moved to an opt-in list; clear error message | `config.py:85`, `llm.py:205–214` |
-| **Qwen leaks its `<think>` scratchpad** into the output → 27 fake "steps" | send `reasoning_effort: "none"` (716 → 74 tokens); strip `<think>` as a backstop | `config.py:60`, `llm.py:345` |
-| **logical_error changed a number** (`48 / 2 = 48`) — wrong class | `is_valid` now requires numbers unchanged for logic edits | `perturbations.py:362` |
-| An **unparseable answer was counted as "follows"** — inflates dependency for models that think longest | now unscored, with the reason recorded | `pipeline.py:394` |
+| **Qwen leaks its `<think>` scratchpad** into the output → 27 fake "steps" | send `reasoning_effort: "none"` (716 → 74 tokens); strip `<think>` as a backstop | `config.py:60`, `llm.py:80` |
+| **logical_error changed a number** (`48 / 2 = 48`) — wrong class | `is_valid` now requires numbers unchanged for logic edits | `perturbations.py:450` |
+| An **unparseable answer was counted as "follows"** — inflates dependency for models that think longest | now unscored, with the reason recorded | `pipeline.py:480` |
 | A **step number could be read as the answer** (`Step 3:` → `3`) | strip step markers before fallback extraction | `answers.py:30` |
 | Re-run token budget (256) too small for models that reason first | raised to 1024 | `pipeline.py:287` |
-| **Re-run cache ignored the perturbed text** | key now includes its hash | `pipeline.py:391` |
-| Error said "failed after 5 attempts" on a 404 that failed once | reports real attempt count | `llm.py:362` |
+| **Re-run cache ignored the perturbed text** | key now includes its hash | `pipeline.py:449` |
+| Error said "failed after 5 attempts" on a 404 that failed once | reports real attempt count | `llm.py:367` |
 | **"1-year" read as the answer 1.** allam wrote `Answer: Wendy earns 34 more badges than Amber in a 1-year time frame.` and 12 "ignores" became "follows" | skip hyphen-fused numbers; prefer numbers the question didn't give. Re-run confirmed 12 → 0 | `answers.py:75` |
 | **The dashboard was blank for the real run.** `/api/summary` returned 500 on `NaN` (accuracy retained, for a model wrong on every baseline) | `NaN` and infinity become `null` before encoding | `dashboard/app.py:80` |
 | **The agent called allam "most load-bearing"** while also reporting that it failed the control 5 of 5 | the chat prompt now requires checking the control and running `label_agreement_check`, which now flags misread baselines | `agent/chat.py`, `agent/tools.py:411` |
-| Progress looked frozen when output was piped, and `·` showed up as `�` on Windows | line-buffered UTF-8 stdout | `main.py:245` |
+| Progress looked frozen when output was piped, and `·` showed up as `�` on Windows | line-buffered UTF-8 stdout | `main.py:740` |
 | **The simulated demo could be opened by mistake.** The picker showed it as plain "demo · 328 cells", and a freshly generated demo would have become the default view | the picker marks simulated runs; real runs are always listed and opened first; the notice was restyled into the design with a one-click switch to real data | `dashboard/app.py:104`, `index.html:597` |
 
 Earlier bugs caught by tests: `SessionStore` reused a session id when switching
@@ -515,7 +637,9 @@ ignored the step text, so model B could get model A's perturbation.
 ## 10. Limitations — say these before you're asked
 
 - **Following ≠ understanding.** A model that follows an error is using the
-  step; that isn't proof it understood it.
+  step; that isn't proof it understood it. It also isn't proof the step was
+  needed — that is what the `step_deletion` arm measures, and the two can
+  disagree on the same step.
 - **Perturbed text is out of distribution.** Some reaction is to strangeness —
   that's what the noise control bounds.
 - **Labels are automatic** (string matching). `label_agreement_check` flags
@@ -528,7 +652,10 @@ ignored the step text, so model B could get model A's perturbation.
 - **Span matching is lenient** (`answers.py:174`: one string containing the
   other), which can over-match short answers on HotpotQA.
 - **Cells from one question aren't independent**, so the z-test is
-  indicative.
+  indicative. Quantified rather than hand-waved now: `stats.observed_icc`
+  measures the clustering and `main.py power` reports the design effect and
+  the interval the run can actually support. The clustered bootstrap
+  (`stats.ratio_bootstrap_ci`) is the interval to quote.
 - **The agent still sometimes does its own arithmetic.** In the live test it
   worked out "≈ 5.6 %" (1 of 18 non-control cells) itself and attached it to
   the wrong denominator in its sentence. The numbers underneath were right;
@@ -559,7 +686,7 @@ on Groq — `config.py:71`.
 per model, shared by all its cells), the perturbation (1–2 attempts), and the
 re-run.
 
-**What if the API fails?** `_with_retries` (`llm.py:362`) backs off and
+**What if the API fails?** `_with_retries` (`llm.py:367`) backs off and
 retries rate limits and server errors; a sample that still fails is logged and
 skipped (`pipeline.py:476`).
 
@@ -568,7 +695,7 @@ skipped (`pipeline.py:476`).
 that every non-target step is byte-identical.
 
 **How do you know the edit is the right class?** A strict per-class prompt,
-class-specific validation (`perturbations.py:345`), and a report of how many
+class-specific validation (`perturbations.py:424`), and a report of how many
 edits came from the fallback.
 
 **Where's the faithfulness score computed?** `score.py:87`.

@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stepwise — demo script</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* Same tokens as the dashboard, so the script looks like the project. */
+  :root {
+    --paper:   oklch(0.955 0.008 85);
+    --paper-2: oklch(0.975 0.005 85);
+    --paper-3: oklch(0.995 0.003 85);
+    --ink:     oklch(0.22 0.012 60);
+    --ink-2:   oklch(0.36 0.010 60);
+    --ink-3:   oklch(0.52 0.010 60);
+    --rule:    oklch(0.86 0.008 75);
+    --rule-2:  oklch(0.80 0.010 75);
+    --accent:  oklch(0.47 0.16 258);
+    --panel:   oklch(0.185 0.012 60);
+    --on-panel: oklch(0.95 0.006 85);
+    --on-panel-3: oklch(0.68 0.010 60);
+    --warn:    oklch(0.52 0.17 40);
+    --warn-bg: oklch(0.95 0.045 70);
+    --good:    oklch(0.45 0.12 160);
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --serif: 'Instrument Serif', Georgia, serif;
+    --sans: 'Archivo', system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 20px; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 400 16px/1.65 var(--sans); -webkit-font-smoothing: antialiased;
+  }
+  .shell { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 0; }
+
+  /* ---- sidebar ---------------------------------------------------- */
+  nav {
+    position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+    border-right: 1px solid var(--rule); padding: 30px 20px; background: var(--paper-2);
+  }
+  nav .brand { font: 400 25px/1 var(--serif); margin-bottom: 3px; }
+  nav .brand em { font-style: italic; color: var(--accent); }
+  nav .tag {
+    font: 500 9.5px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase;
+    color: var(--ink-3); margin-bottom: 26px;
+  }
+  nav .grp {
+    font: 500 9.5px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase;
+    color: var(--ink-3); margin: 22px 0 9px;
+  }
+  nav a {
+    display: block; padding: 7px 10px; margin: 0 -10px; border-radius: 5px;
+    color: var(--ink-2); text-decoration: none; font-size: 14px; line-height: 1.35;
+  }
+  nav a:hover { background: var(--paper-3); color: var(--ink); }
+  nav a small { display: block; font: 400 11px var(--mono); color: var(--ink-3); }
+  nav .total {
+    margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--rule);
+    font: 400 11px/1.5 var(--mono); color: var(--ink-3);
+  }
+
+  /* ---- main ------------------------------------------------------- */
+  main { padding: 48px clamp(22px, 4vw, 60px) 120px; max-width: 920px; }
+  h1 { font: 400 clamp(38px, 5vw, 56px)/1.03 var(--serif); margin: 0 0 10px; letter-spacing: -.01em; }
+  .lede { font-size: 17.5px; color: var(--ink-2); max-width: 64ch; margin: 0 0 8px; }
+  h2 {
+    font: 400 clamp(25px, 3vw, 31px)/1.15 var(--serif); margin: 0 0 4px;
+    letter-spacing: -.005em;
+  }
+  h3 { font: 600 14.5px var(--sans); margin: 26px 0 8px; letter-spacing: .005em; }
+  section { margin-top: 52px; scroll-margin-top: 18px; }
+  .shead { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+  .num {
+    font: 500 10px/1 var(--mono); letter-spacing: .14em; color: var(--ink-3);
+    text-transform: uppercase;
+  }
+  .time {
+    font: 500 10px/1 var(--mono); letter-spacing: .08em; color: var(--accent);
+    border: 1px solid var(--rule-2); border-radius: 99px; padding: 5px 10px;
+  }
+  p { margin: 0 0 14px; }
+
+  /* ---- the three block types -------------------------------------- */
+  .say {
+    border-left: 3px solid var(--accent); background: var(--paper-3);
+    padding: 16px 20px; margin: 14px 0; border-radius: 0 7px 7px 0;
+  }
+  .say p { margin: 0 0 11px; }
+  .say p:last-child { margin: 0; }
+  .say::before {
+    content: "say"; display: block; font: 500 9.5px/1 var(--mono);
+    letter-spacing: .14em; text-transform: uppercase; color: var(--accent);
+    margin-bottom: 9px;
+  }
+  .do {
+    border: 1px solid var(--rule); border-radius: 7px; padding: 13px 17px;
+    margin: 14px 0; background: var(--paper-2); font-size: 14.5px;
+  }
+  .do::before {
+    content: "do"; display: inline-block; font: 500 9.5px/1 var(--mono);
+    letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3);
+    margin-right: 11px;
+  }
+  .note {
+    border-left: 3px solid var(--rule-2); padding: 3px 0 3px 16px; margin: 16px 0;
+    color: var(--ink-2); font-size: 15px;
+  }
+  .warn {
+    border: 1px solid oklch(0.80 0.09 55); background: var(--warn-bg);
+    border-radius: 8px; padding: 17px 20px; margin: 22px 0;
+  }
+  .warn strong { color: var(--warn); }
+  .warn::before {
+    content: "say this once, early, and mean it"; display: block;
+    font: 500 9.5px/1 var(--mono); letter-spacing: .13em; text-transform: uppercase;
+    color: var(--warn); margin-bottom: 10px;
+  }
+
+  pre {
+    background: var(--panel); color: var(--on-panel); border-radius: 8px;
+    padding: 15px 18px; overflow-x: auto; font: 400 12.5px/1.65 var(--mono);
+    margin: 14px 0;
+  }
+  pre .c { color: var(--on-panel-3); }
+  code {
+    font: 400 .875em var(--mono); background: var(--paper-3);
+    border: 1px solid var(--rule); border-radius: 4px; padding: 1.5px 5px;
+  }
+  pre code { background: none; border: none; padding: 0; }
+  b.n { font-variant-numeric: tabular-nums; font-weight: 700; }
+
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14.5px; }
+  th, td { text-align: left; padding: 9px 13px; border-bottom: 1px solid var(--rule); }
+  th {
+    font: 500 9.5px var(--mono); letter-spacing: .1em; text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  td.num-cell { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  details {
+    border: 1px solid var(--rule); border-radius: 7px; padding: 0 17px;
+    margin: 9px 0; background: var(--paper-2);
+  }
+  details[open] { padding-bottom: 5px; }
+  summary {
+    cursor: pointer; padding: 14px 0; font-weight: 600; font-size: 15px;
+    list-style: none;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::before { content: "▸ "; color: var(--accent); }
+  details[open] summary::before { content: "▾ "; }
+
+  .close {
+    margin-top: 60px; padding: 26px 30px; background: var(--panel);
+    color: var(--on-panel); border-radius: 10px;
+  }
+  .close::before {
+    content: "closing line"; display: block; font: 500 9.5px/1 var(--mono);
+    letter-spacing: .14em; text-transform: uppercase; color: var(--on-panel-3);
+    margin-bottom: 12px;
+  }
+  .close p { font: 400 20px/1.45 var(--serif); margin: 0; }
+
+  @media (max-width: 820px) {
+    .shell { grid-template-columns: 1fr; }
+    nav { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--rule); }
+    main { padding: 30px 16px 70px; }
+  }
+  @media print {
+    nav { display: none; }
+    .shell { grid-template-columns: 1fr; }
+    section { break-inside: avoid; }
+    body { background: #fff; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+
+<nav>
+  <div class="brand">Stepwise</div>
+  <div class="tag">demo script</div>
+
+  <div class="grp">Walkthrough</div>
+  <a href="#frame">0 · The frame<small>30 sec</small></a>
+  <a href="#tautology">1 · Measurement was wrong<small>2 min</small></a>
+  <a href="#ablation">2 · Corruption confounds<small>90 sec</small></a>
+  <a href="#pairs">3 · The headline<small>3 min</small></a>
+  <a href="#power">4 · How big a run?<small>90 sec</small></a>
+  <a href="#demo">5 · Why panels have data<small>45 sec</small></a>
+
+  <div class="grp">Prepare</div>
+  <a href="#questions">Expected questions</a>
+  <a href="#commands">Commands, in order</a>
+
+  <div class="total">8–10 min<br>No API key needed.</div>
+</nav>
+
+<main>
+
+<h1>Demo script</h1>
+<p class="lede">
+  A spoken walkthrough of what was added, with the exact commands to run and
+  panels to open. Everything below works with no API key.
+</p>
+<div class="do">
+  <code>python main.py demo</code> (~30 s), then <code>python main.py dashboard</code>.
+  Have the dashboard open before you start.
+</div>
+
+<div class="warn">
+  The behavioural numbers in the demo come from <strong>simulated models</strong> —
+  the dashboard banners it in orange. The <strong>mechanistic</strong> panels are
+  real (a local Qwen2.5-0.5B). Never present a demo number as a finding about a
+  real model. If asked for real numbers: <em>"the instrument is built and tested;
+  it needs a key and a working budget to produce them, and</em>
+  <code>main.py power</code> <em>says how big that run has to be."</em>
+</div>
+
+<!-- ================================================================= -->
+<section id="frame">
+  <div class="shead"><span class="num">00</span><h2>The one-sentence frame</h2><span class="time">30 sec</span></div>
+
+  <div class="say">
+    <p>"The original project asks one question: if you corrupt a step of a
+    model's reasoning, does the answer move? I added four things. Three of them
+    fix ways that question was being answered wrongly. The fourth asks a
+    question the original design <em>cannot</em> answer, no matter how much data
+    you give it."</p>
+  </div>
+  <div class="note">Go in this order — it builds.</div>
+</section>
+
+<!-- ================================================================= -->
+<section id="tautology">
+  <div class="shead"><span class="num">01</span><h2>The measurement was wrong</h2><span class="time">2 min</span></div>
+
+  <div class="do">Findings → <strong>The answer-step tautology</strong></div>
+
+  <div class="say">
+    <p>"If you corrupt the step that <em>states</em> the answer, the answer
+    changes by definition. That's not faithfulness, so those cells have to come
+    out.</p>
+    <p>The original way of spotting them was positional — drop the last step.
+    That's an assumption about where the answer lives, and it's wrong in both
+    directions."</p>
+  </div>
+
+  <div class="do">Point at the table — three dependency figures over the same cells.</div>
+
+  <div class="say">
+    <p>"<code>leakage.py</code> decides it by content instead: did this edit
+    actually <em>remove</em> an answer the step was displaying? On this run that
+    catches <b class="n">4 cells that weren't the final step</b> — the old filter
+    counted those as reasoning. And it keeps <b class="n">116 final-step cells
+    that didn't overwrite anything</b> — the old filter was throwing that
+    evidence away."</p>
+  </div>
+
+  <h3>The line that lands</h3>
+  <div class="say">
+    <p>"This is a construct validity problem. The old measure didn't match the
+    thing it was supposed to measure, and I can show you the count in both
+    directions rather than asserting it."</p>
+  </div>
+
+  <div class="note">
+    Worth adding: it costs nothing. Every input is already in the records, so
+    <code>python main.py score</code> recomputes it over old runs with zero API calls.
+  </div>
+</section>
+
+<!-- ================================================================= -->
+<section id="ablation">
+  <div class="shead"><span class="num">02</span><h2>Corruption confounds two things</h2><span class="time">90 sec</span></div>
+
+  <div class="do">Stay on Findings → scroll to <strong>Was the step needed at all?</strong></div>
+
+  <div class="say">
+    <p>"Every corruption injects an <em>error</em>. So a model that shrugs it off
+    might have reasoning that does no work — or it might have <em>spotted the
+    error</em>. The project's own introspection probe shows models sometimes
+    notice. Corruption can't separate those.</p>
+    <p>So: delete the step instead. Nothing to notice. Now <code>follows</code>
+    means the step was <strong>necessary</strong>."</p>
+  </div>
+
+  <div class="do">Point at the cross-tab — 116 deletions, four outcomes.</div>
+
+  <div class="say">
+    <p>"The two interesting rows are the ones corruption can't produce.
+    <b class="n">12 steps the model needed but didn't blindly follow an error
+    in</b> — it depends on the step without trusting it. And <b class="n">40 it
+    didn't need, yet the answer moved when they were corrupted</b> — that's
+    surface reactivity, not reasoning."</p>
+  </div>
+
+  <table>
+    <thead><tr><th>cross-tab cell</th><th>count</th><th>reading</th></tr></thead>
+    <tbody>
+      <tr><td>needed, and followed an error</td><td class="num-cell">44</td><td>ordinary</td></tr>
+      <tr><td>needed, but did <strong>not</strong> follow</td><td class="num-cell">12</td><td>depends without trusting</td></tr>
+      <tr><td><strong>not</strong> needed, yet followed</td><td class="num-cell">40</td><td>surface reactivity</td></tr>
+      <tr><td>not needed, and ignored</td><td class="num-cell">20</td><td>genuinely inert</td></tr>
+    </tbody>
+  </table>
+
+  <h3>If asked why it's off by default</h3>
+  <div class="note">
+    Because <code>follows</code> means something different here, so pooling it
+    with the corruption classes would make <code>dependency</code> a mixture of
+    two incompatible claims.
+  </div>
+
+  <h3>One detail worth volunteering — it shows care</h3>
+  <div class="say">
+    <p>"When you delete a step you have to renumber the rest. A chain reading
+    'Step 1, Step 3' tells the model something was removed, and a model that
+    detects tampering is answering a different question than the one you asked."</p>
+  </div>
+</section>
+
+<!-- ================================================================= -->
+<section id="pairs">
+  <div class="shead"><span class="num">03</span><h2>The headline: a question the design couldn't answer</h2><span class="time">3 min</span></div>
+
+  <div class="do">Stay on Findings → scroll to <strong>Two steps at once</strong></div>
+  <div class="note">Set it up as a puzzle <em>before</em> showing the panel.</div>
+
+  <div class="say">
+    <p>"Suppose a chain reaches its answer by two routes — it computes the
+    total, then derives it again a different way. Corrupt either step alone: the
+    answer doesn't move, because the other route still carries it.</p>
+    <p>So the single-step probe records <code>ignores</code> twice and concludes
+    the reasoning is inert. The opposite is true — it was load-bearing
+    <em>twice over</em>."</p>
+  </div>
+
+  <h3>Then the key claim, slowly</h3>
+  <div class="say">
+    <p>"Redundancy and unfaithfulness are <strong>observationally identical</strong>
+    under one-at-a-time intervention. This isn't a sample-size problem. Running
+    ten thousand more single-step cells recovers nothing, because the
+    information isn't in that data at all.</p>
+    <p>In factorial terms: single-step probing estimates main effects, and
+    redundancy is an interaction. You cannot estimate an interaction from
+    marginal data."</p>
+  </div>
+
+  <div class="do">Now the panel — 38 pairs, synergy rate 50%.</div>
+
+  <div class="say">
+    <p>"Three of the six pairs where neither step moved the answer alone moved
+    it together. That's reasoning the single-step arm scored as inert."</p>
+  </div>
+
+  <h3>The cost question will come — answer it before it does</h3>
+  <div class="say">
+    <p>"Pairs are quadratic — eight steps give 28 per class, more calls than the
+    whole single-step grid. Two things hold that down. It subsamples
+    deterministically, and it's <strong>targeted</strong>: it reads the existing
+    run and only pairs steps whose single-step cells <em>both</em> came back
+    <code>ignores</code>.</p>
+    <p>That rule isn't a heuristic — it falls out of the classification table. A
+    pair containing a step that already moves the answer alone can only ever
+    come out <code>additive</code>. It's provably uninformative about synergy,
+    so dropping it costs nothing. That makes this a two-stage adaptive design:
+    stage-one results decide which stage-two cells are worth running."</p>
+  </div>
+
+  <h3>Volunteer the limit before anyone finds it</h3>
+  <div class="say">
+    <p>"A chain with <em>three</em> routes needs triples, and that grid is cubic.
+    So this bounds the redundancy problem rather than closing it — a zero
+    synergy rate is evidence against two-way redundancy only."</p>
+  </div>
+</section>
+
+<!-- ================================================================= -->
+<section id="power">
+  <div class="shead"><span class="num">04</span><h2>How big does a real run need to be?</h2><span class="time">90 sec</span></div>
+
+  <div class="do">Diagnostics → <strong>How big does the run need to be?</strong></div>
+  <div class="note">Run this live if you have a terminal up — it's fast.</div>
+
+<pre><code>python main.py power --dataset demo</code></pre>
+
+  <div class="say">
+    <p>"The project's standing limitation was scale. That was a shrug; now it's
+    a number.</p>
+    <p>The subtlety is that the unit of sampling is the <em>question</em>, not
+    the cell. Cells from one question share a chain of thought, so they aren't
+    independent observations. The textbook two-proportion formula assumes they
+    are, and under-sizes the run by the design effect —
+    <code>1 + (m-1)·ICC</code>. At 8 cells a question that's
+    <b class="n">2.1×</b> at an ICC of 0.15 and <b class="n">4.2×</b> at 0.45."</p>
+  </div>
+
+  <div class="do">Click the effect-size chips. Moderate → small.</div>
+
+  <div class="say">
+    <p>"And it's not one answer — it depends how big an effect you'll settle
+    for. Moderate needs 8 questions here, small needs far more. The ICC is
+    <em>measured off the run</em>, not assumed."</p>
+  </div>
+
+  <h3>If asked why the ICC reads 0.0</h3>
+  <div class="note">
+    Because this is the simulated demo, where cells are generated independently
+    by construction. Real model data would show clustering. That's an honest,
+    good answer — say it rather than skating past.
+  </div>
+</section>
+
+<!-- ================================================================= -->
+<section id="demo">
+  <div class="shead"><span class="num">05</span><h2>Why every panel has data</h2><span class="time">45 sec</span></div>
+  <div class="note">Only if you have time, or if someone asks how you demo without a key.</div>
+
+  <div class="say">
+    <p>"The demo used to cover only the main pipeline, so half the dashboard sat
+    empty and the only way to fill it was an API key. I extended the simulated
+    provider to answer the remaining prompt shapes, so <code>main.py demo</code>
+    now fills everything — battery, introspection, the benchmark, both arms.</p>
+    <p>They're not noise. Each simulated model has named behavioural parameters,
+    so the panels are <em>differentiated</em> and you can read them against what
+    each model was built to be."</p>
+  </div>
+
+  <div class="do">Show it with one contrast — Diagnostics → battery.</div>
+
+  <div class="say">
+    <p>"<code>sim-detached</code> answers correctly from <b class="n">zero steps
+    75%</b> of the time, and still gets <b class="n">75%</b> right when its whole
+    chain is replaced with dots. <code>sim-faithful</code> answers from zero
+    steps <b class="n">0%</b> of the time and drops to <b class="n">25%</b> on
+    filler. That's the early-answering signal doing exactly what it should — one
+    of them needs its reasoning, the other doesn't."</p>
+  </div>
+</section>
+
+<!-- ================================================================= -->
+<section id="questions">
+  <div class="shead"><span class="num">Q&amp;A</span><h2>Questions you should expect</h2></div>
+
+  <details>
+    <summary>"Isn't this just more code?"</summary>
+    <p>No — the complexity is in four specific places: an identifiability
+    argument, a sampling rule derived from the estimand, a construct-validity
+    correction, and a clustering correction. The CLI commands and dashboard
+    panels are ordinary plumbing, and I'd say so.</p>
+  </details>
+
+  <details>
+    <summary>"How do you know the pair probe finds real redundancy and not noise?"</summary>
+    <p>Two guards. A pair where either half merely overwrote the stated answer is
+    excluded as tautological — on this run that's <b class="n">24 of 38</b>, so
+    without it most "findings" would be the old artifact in new clothing. And an
+    unclassifiable pair returns empty rather than defaulting to synergistic,
+    because defaulting would manufacture the headline from missing data.</p>
+  </details>
+
+  <details>
+    <summary>"Why is <code>corrects</code> treated as the answer having moved?"</summary>
+    <p>Because it did — to the gold answer. Folding it in with
+    <code>ignores</code> would mark a pair synergistic on the strength of a step
+    that demonstrably moves the answer alone. That's the exact false positive the
+    probe exists to prevent. I had it wrong at first; a test caught it.</p>
+  </details>
+
+  <details>
+    <summary>"Does any of this change the original numbers?"</summary>
+    <p>The tautology fix does, and that's the point — the old filter was biased
+    in both directions. Everything else is additive: pair records go to their own
+    sidecar and never into the main results, and there's a test asserting the
+    per-model table is byte-identical before and after running the arm.</p>
+  </details>
+
+  <details>
+    <summary>"What's the weakest part?"</summary>
+    <p>The scale. Everything here is demonstrated on simulated models or on two
+    to three questions of local-model compute. The instrument is tested —
+    <b class="n">611 tests</b>, all offline — but a real finding needs a key and
+    the run size the power planner specifies. I'd rather say that than dress up a
+    demo number.</p>
+  </details>
+</section>
+
+<!-- ================================================================= -->
+<section id="commands">
+  <div class="shead"><span class="num">REF</span><h2>Commands, in order</h2></div>
+
+<pre><code>python -m pytest tests/ -q                     <span class="c"># 611 passed</span>
+python main.py demo                            <span class="c"># fills every panel, ~30s</span>
+python main.py score --dataset demo            <span class="c"># tautology + ablation cross-tab</span>
+python main.py power --dataset demo            <span class="c"># sizing</span>
+python main.py benchmark                       <span class="c"># validate the in-repo benchmark</span>
+python main.py dashboard                       <span class="c"># http://127.0.0.1:8000</span></code></pre>
+
+  <div class="note">
+    Optional, if you want the mechanistic panels live (slow on CPU, needs
+    <code>torch</code> + <code>transformers</code>):
+  </div>
+
+<pre><code>python main.py mech --dataset gsm8k --n_samples 2 --max-steps 4 \
+    --patch --output results/demo.mech.jsonl</code></pre>
+</section>
+
+<div class="close">
+  <p>"The through-line is that each of these started as a way the original
+  instrument could give a confident wrong answer. Three were measurement errors
+  I could correct and quantify. The fourth was a question the design couldn't
+  reach at all — and that one needed a new intervention, not more data."</p>
+</div>
+
+</main>
+</div>
+</body>
+</html>

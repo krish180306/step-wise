@@ -57,3 +57,56 @@ def test_empty_run_yields_empty_card(tmp_path):
     assert report["per_model"] == []
     html = report_card.render_html(report)
     assert "No scored records" in html
+
+
+def test_card_carries_the_tautology_block(tmp_path):
+    rd = _write_run(tmp_path)
+    report = report_card.build_report("gsm8k", results_dir=rd)
+    assert "tautology" in report
+    html = report_card.render_html(report)
+    assert "How much of that was the answer being restated" in html
+    assert "the honest number" in html
+
+
+def test_card_shows_the_ablation_section_when_the_run_has_one(tmp_path):
+    # The demo now includes the ablation arm, so the section should appear.
+    rd = _write_run(tmp_path)
+    html = report_card.render_html(report_card.build_report("gsm8k", results_dir=rd))
+    assert "Was the step needed at all" in html
+
+
+def test_card_hides_the_ablation_section_when_there_is_none(tmp_path):
+    import json
+
+    from stepwise.config import ABLATION_TYPES
+
+    rd = _write_run(tmp_path)
+    path = rd / "gsm8k.jsonl"
+    rows = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    kept = [r for r in rows if r.get("perturbation_type") not in ABLATION_TYPES]
+    assert len(kept) < len(rows), "the demo should have had ablation cells to strip"
+    path.write_text("\n".join(json.dumps(r) for r in kept) + "\n", encoding="utf-8")
+
+    html = report_card.render_html(report_card.build_report("gsm8k", results_dir=rd))
+    assert "Was the step needed at all" not in html
+
+
+def test_card_shows_the_ablation_section_when_present():
+    html = report_card.render_html({
+        "dataset": "x", "generated_at": "now", "coverage": {}, "per_model": [],
+        "domain_leaderboard": {}, "tautology": {},
+        "necessity": {
+            "n_ablation_cells": 4, "necessity_rate_reasoning": 0.5,
+            "cross_tab": {"necessary_and_followed": 1, "necessary_not_followed": 1,
+                          "redundant_but_followed": 1, "redundant_and_ignored": 1},
+        },
+    })
+    assert "Was the step needed at all" in html
+    assert "without blindly trusting it" in html
+
+
+def test_empty_blocks_render_nothing():
+    assert report_card._tautology_html({}) == ""
+    assert report_card._tautology_html({"n_scored": 0}) == ""
+    assert report_card._necessity_html({}) == ""
+    assert report_card._necessity_html({"n_ablation_cells": 0}) == ""
