@@ -32,7 +32,7 @@ python main.py introspect --dataset gsm8k          # self-knowledge probe: does 
 python main.py analyse --dataset gsm8k              # agent writes a report, then fact-checks it
 python main.py validate --dataset gsm8k             # label reliability + regression
 python main.py dashboard                            # http://127.0.0.1:8000
-python -m pytest tests/ -q                          # 611 tests, no network, no GPU
+python -m pytest tests/ -q                          # 618 tests, no network, no GPU
 ```
 
 ---
@@ -342,8 +342,10 @@ panel. FastAPI serves the API and the page as one process.
 
 ## Models
 
-Four Groq free-tier chat models (checked live): `gpt-oss-120b`, `qwen3.6-27b`,
-`qwen3.8-27b`, `allam-2-7b` — three vendors, 7B to 120B. The Qwen models run
+Three Groq free-tier chat models (checked live): `gpt-oss-120b`,
+`qwen3.8-27b`, `allam-2-7b` — three vendors, 7B to 120B. `qwen3.6-27b` was a
+fourth until Groq retired it (it 404s as of 2026-10-15); it stays addressable
+with `--models` but is out of the default lineup. The Qwen models run
 with thinking switched off (otherwise the `<think>` scratchpad leaks into the
 reasoning). `python main.py models` lists them. The mechanistic track uses a
 separate local HF model (default `Qwen/Qwen2.5-0.5B-Instruct`).
@@ -368,7 +370,7 @@ tier is rate-limited and a full grid is thousands of calls.
 ## Testing, CI, Docker
 
 ```bash
-pytest tests/ -q      # 611 tests, all offline (scripted provider, fake scorer)
+pytest tests/ -q      # 618 tests, all offline (scripted provider, fake scorer)
 ```
 
 CI (`.github/workflows/ci.yml`) runs the suite on Python 3.11–3.13 with no key
@@ -414,7 +416,7 @@ stepwise/
   dashboard/
     app.py           FastAPI API + SSE chat + annotation endpoints
     static/index.html the page
-tests/               611 tests, no network
+tests/               618 tests, no network
 docs/                call map, deploy guide, MCP config
 ```
 

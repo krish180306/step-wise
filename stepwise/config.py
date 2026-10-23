@@ -59,7 +59,7 @@ class ModelSpec:
 #: answers in 6 tokens instead of running out mid-thought.
 _NO_THINKING = (("reasoning_effort", "none"),)
 
-#: The default lineup: four models the project's free-tier Groq key can reach
+#: The default lineup: three models the project's free-tier Groq key can reach
 #: (checked against the live /models endpoint on 2026-09-11), each verified
 #: with a live elicit-and-rerun on GSM8K. Three vendors — OpenAI's open
 #: weights, Alibaba's Qwen, SDAIA's ALLaM — spanning 7B to 120B.
@@ -70,11 +70,19 @@ _NO_THINKING = (("reasoning_effort", "none"),)
 #: tightest fit, so look there first if it errors.
 GROQ_MODELS = [
     ModelSpec(name="gpt-oss-120b", provider="groq", api_id="openai/gpt-oss-120b", label="GPT-OSS 120B"),
-    ModelSpec(name="qwen3.6-27b", provider="groq", api_id="qwen/qwen3.6-27b",
-              label="Qwen 3.6 27B", extra=_NO_THINKING),
     ModelSpec(name="qwen3.8-27b", provider="groq", api_id="qwen/qwen3.8-27b",
               label="Qwen 3.8 27B", extra=_NO_THINKING),
     ModelSpec(name="allam-2-7b", provider="groq", api_id="allam-2-7b", label="ALLaM 2 7B"),
+]
+
+#: Retired from the free tier after the lineup above was fixed. `qwen3.6-27b`
+#: 404s as of 2026-10-15 — the preview-tier warning above came true. Kept
+#: addressable so `--models qwen3.6-27b` still resolves (reproducing an older
+#: run, or a key that retains access) without putting a dead id in the path
+#: every default run takes.
+GROQ_RETIRED_MODELS = [
+    ModelSpec(name="qwen3.6-27b", provider="groq", api_id="qwen/qwen3.6-27b",
+              label="Qwen 3.6 27B", extra=_NO_THINKING),
 ]
 
 #: Reachable on the free tier but not in the default lineup. gpt-oss-20b calls
@@ -107,7 +115,8 @@ OTHER_PROVIDER_MODELS = [
 
 MODEL_REGISTRY: dict[str, ModelSpec] = {
     m.name: m
-    for m in GROQ_MODELS + GROQ_LIMITED_MODELS + GROQ_PAID_MODELS + OTHER_PROVIDER_MODELS
+    for m in (GROQ_MODELS + GROQ_LIMITED_MODELS + GROQ_RETIRED_MODELS
+              + GROQ_PAID_MODELS + OTHER_PROVIDER_MODELS)
 }
 # Allow addressing a model by its raw API id too ("openai/gpt-oss-120b").
 MODEL_REGISTRY.update({m.api_id: m for m in MODEL_REGISTRY.values()})

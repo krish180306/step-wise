@@ -11,8 +11,8 @@ import pathlib
 import re
 import sys
 
-ROOT = pathlib.Path(r"C:\Users\saikr\Desktop\projects\NLP")
 HERE = pathlib.Path(__file__).parent
+ROOT = HERE.parent
 
 PY_DEF = re.compile(r"^(\s*)(?:async\s+)?def\s+(\w+)\s*\(")
 PY_CLASS = re.compile(r"^(\s*)class\s+(\w+)\b")
@@ -133,7 +133,7 @@ EDGES = [
     ("main", F_MAIN, None, "main", "handlers[args.command](args)", "main", "dispatches to the chosen cmd_* handler"),
     ("main", F_MAIN, None, "_require_key", "api_key(", "config", "fails early if the provider key is missing"),
     ("main", F_MAIN, None, "cmd_run", "RunConfig(", "config", "builds the run configuration"),
-    ("main", F_MAIN, None, "cmd_run", "run_evaluation(config)", "pipeline", "starts the evaluation"),
+    ("main", F_MAIN, None, "cmd_run", "run_evaluation(config", "pipeline", "starts the evaluation"),
     ("main", F_MAIN, None, "cmd_run", "result.save()", "pipeline", "RunResult.save() writes the run to disk"),
     ("main", F_MAIN, None, "cmd_run", "score.faithfulness_scores(", "score", "prints the faithfulness table"),
     ("main", F_MAIN, None, "cmd_demo", "run_demo(", "demo", "runs the simulated offline pipeline"),
@@ -271,7 +271,7 @@ FLOWS = {
         "command": "python main.py --dataset gsm8k",
         "summary": "One question through the whole experiment. Steps 5 to 7 happen on every LLM call.",
         "steps": [
-            (F_MAIN, None, "cmd_run", "run_evaluation(config)", "The CLI starts the evaluation"),
+            (F_MAIN, None, "cmd_run", "run_evaluation(config", "The CLI starts the evaluation"),
             (F_PIPE, None, "run_evaluation", "load_samples(", "Load the questions"),
             (F_DATA, None, "_try_load", "load_dataset(", "Download them from HuggingFace"),
             (F_PIPE, None, "elicit_trace", "client.complete(", "API call 1: the model writes its own chain of thought"),

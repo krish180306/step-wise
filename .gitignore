@@ -15,3 +15,7 @@ results/*.failed.*
 models/
 activations/
 results/*.html
+# Local recovery copies of sidecars. The patterns above match by extension, so
+# a file like probe.battery.jsonl.3model.bak slips past them.
+results/*.bak
+

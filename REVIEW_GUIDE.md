@@ -50,7 +50,7 @@ python main.py analyse --dataset gsm8k             # agent writes a report
 python main.py ask --dataset gsm8k -q "..."        # agent answers one question
 python main.py dashboard                           # http://127.0.0.1:8000
 python main.py models                              # list models + which keys are set
-python -m pytest tests/ -q                         # 611 tests, no network
+python -m pytest tests/ -q                         # 618 tests, no network
 ```
 
 The CLI lives in `main.py`: `build_parser` (34), `cmd_run` (128), `cmd_demo`
@@ -113,7 +113,7 @@ only then picks a provider. The callers of `LLMClient.complete`:
 The other network access is HuggingFace dataset download,
 `datasets.py:78` `_try_load`.
 
-**The API key** is read from the environment by `config.py:201` `api_key`,
+**The API key** is read from the environment by `config.py:210` `api_key`,
 loaded from `.env` by `llm.py:524` `load_dotenv`, and the Groq SDK client is
 built lazily in `llm.py:249` `GroqProvider._make_client`. `.env` is in
 `.gitignore`.
@@ -139,8 +139,11 @@ built lazily in `llm.py:249` `GroqProvider._make_client`. `.env` is in
   (46): provider-specific request parameters, e.g. switching Qwen's thinking
   off.
 - `_NO_THINKING` (60) — `reasoning_effort: "none"` for Qwen (see §9).
-- `GROQ_MODELS` (71) — the default four: `gpt-oss-120b`, `qwen3.6-27b`,
-  `qwen3.8-27b`, `allam-2-7b`.
+- `GROQ_MODELS` (71) — the default three: `gpt-oss-120b`, `qwen3.8-27b`,
+  `allam-2-7b`.
+- `GROQ_RETIRED_MODELS` — `qwen3.6-27b`, which Groq retired (404 as of
+  2026-10-15). Still resolvable by name so an older run can be reproduced,
+  but kept out of the path every default run takes.
 - `GROQ_LIMITED_MODELS` (85) — `gpt-oss-20b`: free, but fails on arithmetic.
 - `GROQ_PAID_MODELS` (91) — the Llama models, now 404 on the free tier.
 - `MODEL_REGISTRY` (108), `resolve_model` (116) — look a model up by handle or
@@ -679,8 +682,9 @@ agent-written report.
 CommonsenseQA (letter), BIG-Bench Hard (one subtask per run) —
 `datasets.py:265`.
 
-**Which models?** `gpt-oss-120b`, `qwen3.6-27b`, `qwen3.8-27b`, `allam-2-7b`
-on Groq — `config.py:71`.
+**Which models?** `gpt-oss-120b`, `qwen3.8-27b`, `allam-2-7b` on Groq —
+`config.py:71`. `qwen3.6-27b` was retired by Groq and moved out of the
+default lineup; it still resolves if you name it.
 
 **How many API calls per cell?** Up to three: the baseline (once per question
 per model, shared by all its cells), the perturbation (1–2 attempts), and the
@@ -705,7 +709,7 @@ analyst writes one full report (14 turns); the chat is multi-turn and streams
 each tool call to the browser (8 turns per question).
 
 **How is it tested with no API key?** A scripted fake provider stands in for
-Groq everywhere, including the agent's tool calls. 276 tests, no network.
+Groq everywhere, including the agent's tool calls. 618 tests, no network.
 
 **Is the key safe?** In `.env`, which is gitignored; never logged or sent
 anywhere but Groq. The dashboard binds to localhost, run names can't escape

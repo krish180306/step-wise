@@ -4,7 +4,7 @@
     "stepwise": {
       "command": "python",
       "args": ["-m", "stepwise.mcp_server"],
-      "cwd": "C:/Users/saikr/Desktop/projects/NLP",
+      "cwd": "/absolute/path/to/step-wise",
       "env": { "STEPWISE_RUN": "gsm8k" }
     }
   }

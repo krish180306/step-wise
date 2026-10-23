@@ -120,6 +120,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default="127.0.0.1", help="dashboard host")
     parser.add_argument("--port", type=int, default=8000, help="dashboard port")
     parser.add_argument("--reload", action="store_true", help="dashboard autoreload")
+    parser.add_argument("--overwrite", action="store_true",
+                        help="demo: regenerate the probe-set run even when "
+                             "results/probe.jsonl holds a real one")
     return parser
 
 
@@ -647,6 +650,18 @@ def cmd_demo(args) -> int:
     if args.demo_dataset == "all":
         from stepwise import probe_score
 
+        if _holds_a_real_run(RESULTS_DIR / "probe.jsonl") and not args.overwrite:
+            print(
+                "\nSkipping the simulated probe-set run: results/probe.jsonl holds"
+                " a REAL run, and regenerating it would overwrite those records"
+                " and their sidecars. The demo's own run was still written.\n"
+                "  keep it    - nothing to do; the probe panels keep real data\n"
+                "  replace it - python main.py demo --overwrite",
+                file=sys.stderr,
+            )
+            print("\nNow: python main.py dashboard")
+            return 0
+
         probe_result = run_demo(dataset="probe", n_samples=max(12, args.n_samples))
         probe_path = probe_result.save(RESULTS_DIR / "probe.jsonl")
         print(f"\nProbe-set run written to {probe_path.name}")
@@ -658,6 +673,28 @@ def cmd_demo(args) -> int:
 
     print("\nNow: python main.py dashboard")
     return 0
+
+
+def _holds_a_real_run(path) -> bool:
+    """Does this file already hold records from a real model?
+
+    The demo regenerates the probe-set run, which silently destroyed a real one
+    (and its battery/introspect/interactions sidecars) the first time someone
+    ran `demo` on a populated results directory. Records carry `simulated`, so
+    the question is answerable from the first line. An unreadable or empty file
+    is treated as "not real" — the demo is then free to write, which is the
+    same thing it did before this guard existed.
+    """
+    import json as _json
+
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip():
+                    return not _json.loads(line).get("simulated", False)
+    except (OSError, ValueError):
+        return False
+    return False
 
 
 def _write_demo_sidecars(result, path, *, verbose: bool) -> None:
