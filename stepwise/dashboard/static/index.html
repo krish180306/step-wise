@@ -207,6 +207,58 @@ dl.stats dd small { font-family: var(--mono); font-size: 11px; color: var(--ink-
 .heat-ramp i { flex: 1; }
 .metric-toggle { display: flex; gap: 6px; }
 
+/* --- probe picker -------------------------------------------------------- */
+.probe-bar { margin-bottom: 34px; padding-bottom: 22px; border-bottom: 1px solid var(--rule); }
+.probe-bar.on-panel { border-bottom-color: var(--panel-rule); }
+.probe-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+.probe-head .ttl { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.11em; text-transform: uppercase; color: var(--ink-3); }
+.probe-bar.on-panel .probe-head .ttl { color: var(--on-panel-3); }
+.probe-acts { display: flex; gap: 6px; }
+.probe-acts button { background: none; border: 0; cursor: pointer; font-family: var(--mono); font-size: 10.5px;
+  letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-3); padding: 2px 4px; }
+.probe-acts button:hover { color: var(--accent); }
+.probe-bar.on-panel .probe-acts button { color: var(--on-panel-3); }
+.probe-bar.on-panel .probe-acts button:hover { color: var(--accent-up); }
+.probe-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.probe-chip { text-align: left; }
+.probe-chip[data-available="0"] { opacity: 0.58; font-style: italic; }
+.probe-chip .dot { display: inline-block; width: 6px; height: 6px; border-radius: 999px; margin-right: 7px;
+  background: currentColor; vertical-align: middle; opacity: 0.55; }
+.probe-chip[aria-pressed="true"] .dot { opacity: 1; }
+.probe-count { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
+.probe-bar.on-panel .probe-count { color: var(--on-panel-3); }
+.probe-block.hidden { display: none; }
+
+/* --- "why this probe" disclosure ---------------------------------------- */
+.probe-why { margin: 0 0 16px; }
+.probe-why > summary { cursor: pointer; list-style: none; font-family: var(--mono); font-size: 10.5px;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+.probe-why > summary::-webkit-details-marker { display: none; }
+.probe-why > summary::before { content: "+ "; }
+.probe-why[open] > summary::before { content: "- "; }
+.probe-why > summary:hover { color: var(--accent); }
+.probe-why.on-panel > summary { color: var(--on-panel-3); }
+.probe-why.on-panel > summary:hover { color: var(--accent-up); }
+.probe-why p { margin-top: 10px; }
+
+/* --- triangulation status matrix ---------------------------------------- */
+.tri-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(226px, 100%), 1fr)); gap: 2px; }
+
+/* A grid item defaults to min-width:auto, so it refuses to shrink below its
+   own content — which overflows the page on a narrow screen and defeats the
+   .table-scroll wrappers, since the table can simply push its cell wider.
+   Letting these tracks reach zero is what makes the inner scrollers work. */
+.section-body { min-width: 0; }
+.section-body > * { min-width: 0; }
+.tri-cell { padding: 13px 14px; background: var(--panel-2); border-left: 2px solid var(--panel-rule); }
+.tri-cell[data-ran="1"] { border-left-color: var(--accent-up); }
+.tri-cell .nm { font-family: var(--sans); font-weight: 650; font-size: 13px; color: var(--on-panel); }
+.tri-cell .qs { font-size: 11.5px; line-height: 1.45; color: var(--on-panel-3); margin-top: 4px; }
+.tri-cell .st { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase;
+  margin-top: 8px; color: var(--on-panel-3); }
+.tri-cell[data-ran="1"] .st { color: var(--accent-up); }
+
+
 /* --- outcome bars -------------------------------------------------------- */
 .bar-row { margin-bottom: 18px; }
 .bar-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-family: var(--mono); font-size: 11.5px; margin-bottom: 8px; }
@@ -935,41 +987,49 @@ table.data tbody tr:hover { background: var(--paper-3); }
     </div>
     <div class="section-body" style="display:grid; gap:40px;">
 
-      <div>
+      <div class="probe-bar" data-group="findings"></div>
+
+      <div class="probe-block" data-probe="tautology" id="tautology-block">
         <h3 style="font-size:19px; margin-bottom:6px;">The answer-step tautology</h3>
-        <p class="note" style="margin-bottom:16px;">Corrupting a step that <em>states</em> the answer changes the answer almost by definition. That is not faithfulness. Two ways of spotting those cells are shown: <strong>final step</strong> is the crude positional proxy, and <strong>answer overwritten</strong> asks whether the edit actually removed an answer the step was displaying — wherever that step sat in the chain. The second is the honest one; the gap between them is how much the proxy was getting wrong. <strong>Inflation</strong> is how many percentage points the all-steps figure sits above the honest one — positive means the tautology was flattering the model.</p>
+        <details class="probe-why"><summary>why this probe</summary><p class="note">Corrupting a step that <em>states</em> the answer changes the answer almost by definition. That is not faithfulness. Two ways of spotting those cells are shown: <strong>final step</strong> is the crude positional proxy, and <strong>answer overwritten</strong> asks whether the edit actually removed an answer the step was displaying — wherever that step sat in the chain. The second is the honest one; the gap between them is how much the proxy was getting wrong. <strong>Inflation</strong> is how many percentage points the all-steps figure sits above the honest one — positive means the tautology was flattering the model.</p></details>
         <div class="table-scroll"><table class="data" id="tautology-table"></table></div>
         <p class="note on-panel" id="tautology-note" style="margin-top:10px;"></p>
 
-        <h3 style="font-size:19px; margin:28px 0 6px;">Was the step needed at all?</h3>
-        <p class="note" style="margin-bottom:16px;">Every corruption injects an <em>error</em>, which a model can defeat by noticing it. Deleting the step instead injects nothing to notice, so a moved answer means the step was <strong>necessary</strong> — not that an error was followed. The cross-tab against the corruption cells on the same steps is where the two disagree.</p>
+      </div>
+
+      <div class="probe-block" data-probe="necessity" id="necessity-block">
+        <h3 style="font-size:19px; margin-bottom:6px;">Was the step needed at all?</h3>
+        <details class="probe-why"><summary>why this probe</summary><p class="note">Every corruption injects an <em>error</em>, which a model can defeat by noticing it. Deleting the step instead injects nothing to notice, so a moved answer means the step was <strong>necessary</strong> — not that an error was followed. The cross-tab against the corruption cells on the same steps is where the two disagree.</p></details>
         <div class="table-scroll"><table class="data" id="necessity-table"></table></div>
         <div class="table-scroll" id="necessity-cross" style="margin-top:12px;"></div>
 
-        <h3 style="font-size:19px; margin:28px 0 6px;">Two steps at once — the redundancy a single probe can't see</h3>
-        <p class="note" style="margin-bottom:16px;">Moving one step at a time has a blind spot built into it. If a chain reaches its answer by <em>two</em> routes, breaking either alone changes nothing — and the single-step probe records <code>ignores</code> twice and calls the reasoning inert, when it was load-bearing twice over. Breaking both at once is the only intervention that can tell those apart. <strong>Synergistic</strong> pairs are the finding: neither step moved the answer alone, together they did.</p>
+      </div>
+
+      <div class="probe-block" data-probe="interactions" id="interactions-block">
+        <h3 style="font-size:19px; margin-bottom:6px;">Two steps at once — the redundancy a single probe can't see</h3>
+        <details class="probe-why"><summary>why this probe</summary><p class="note">Moving one step at a time has a blind spot built into it. If a chain reaches its answer by <em>two</em> routes, breaking either alone changes nothing — and the single-step probe records <code>ignores</code> twice and calls the reasoning inert, when it was load-bearing twice over. Breaking both at once is the only intervention that can tell those apart. <strong>Synergistic</strong> pairs are the finding: neither step moved the answer alone, together they did.</p></details>
         <div class="table-scroll"><table class="data" id="interactions-table"></table></div>
         <p class="note on-panel" id="interactions-note" style="margin-top:10px;"></p>
         <div id="interactions-examples" style="margin-top:12px;"></div>
       </div>
 
-      <div>
+      <div class="probe-block" data-probe="domain" id="domain-block">
         <h3 style="font-size:19px; margin-bottom:6px;">Faithfulness by reasoning domain</h3>
-        <p class="note" style="margin-bottom:16px;">Reasoning steps only, chance-corrected (a yes/no answer matches by luck 50% of the time; a 5-way choice 20%; these are removed). Bars show the 95% interval from resampling whole questions — the honest width when cells within a question are not independent.</p>
+        <details class="probe-why"><summary>why this probe</summary><p class="note">Reasoning steps only, chance-corrected (a yes/no answer matches by luck 50% of the time; a 5-way choice 20%; these are removed). Bars show the 95% interval from resampling whole questions — the honest width when cells within a question are not independent.</p></details>
         <div id="domain-chart"></div>
         <p class="note" id="domain-note" style="margin-top:14px;"></p>
       </div>
 
-      <div id="leaderboard-block">
+      <div class="probe-block" data-probe="leaderboard" id="leaderboard-block">
         <h3 style="font-size:19px; margin-bottom:6px;">Best model per domain</h3>
-        <p class="note" style="margin-bottom:16px;">Which model to trust for which kind of reasoning — by two measures at once. <b>Dependence</b> is how load-bearing the model's chain of thought is in that domain (chance-corrected); <b>accuracy</b> is how often its clean answer is right. They're not the same: a model can be accurate while its reasoning is inert. ◆ marks the most faithful model in a domain, ● the most accurate.</p>
+        <details class="probe-why"><summary>why this probe</summary><p class="note">Which model to trust for which kind of reasoning — by two measures at once. <b>Dependence</b> is how load-bearing the model's chain of thought is in that domain (chance-corrected); <b>accuracy</b> is how often its clean answer is right. They're not the same: a model can be accurate while its reasoning is inert. ◆ marks the most faithful model in a domain, ● the most accurate.</p></details>
         <div class="table-scroll"><table class="data" id="leaderboard-table"></table></div>
         <p class="note" id="leaderboard-note" style="margin-top:12px;"></p>
       </div>
 
-      <div id="probe-block">
+      <div class="probe-block" data-probe="probeset" id="probe-block">
         <h3 style="font-size:19px; margin-bottom:6px;">Probe set — measured against known critical steps</h3>
-        <p class="note" style="margin-bottom:16px;">Everywhere else "load-bearing" is inferred. The probe set is hand-authored with the critical step <em>known</em>, so a corruption has a correct outcome: breaking the critical step <em>should</em> move a faithful model's answer; the irrelevant-noise control should not. <b>Sensitivity</b> is how often the answer moved when the key step broke; <b>control</b> how often it moved on a meaningless edit; <b>discrimination</b> (sensitivity − control) is the one number that says how much the stated reasoning is really doing.</p>
+        <details class="probe-why"><summary>why this probe</summary><p class="note">Everywhere else "load-bearing" is inferred. The probe set is hand-authored with the critical step <em>known</em>, so a corruption has a correct outcome: breaking the critical step <em>should</em> move a faithful model's answer; the irrelevant-noise control should not. <b>Sensitivity</b> is how often the answer moved when the key step broke; <b>control</b> how often it moved on a meaningless edit; <b>discrimination</b> (sensitivity − control) is the one number that says how much the stated reasoning is really doing.</p></details>
         <div class="table-scroll"><table class="data" id="probe-table"></table></div>
       </div>
 
@@ -988,58 +1048,62 @@ table.data tbody tr:hover { background: var(--paper-3); }
     </div>
     <div class="section-body" style="display:grid; gap:36px;">
 
-      <div id="battery-block">
+      <div id="triangulation"></div>
+      <div class="probe-bar on-panel" data-group="methods"></div>
+
+
+      <div class="probe-block" data-probe="battery" id="battery-block">
         <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">The battery — four more tests</h3>
-        <p class="note on-panel" style="margin-bottom:16px;">Each isolates a different failure mode. Early answering: did the model decide before reasoning? Paraphrase: does a reword move the answer (it shouldn't)? Filler: does accuracy survive replacing the reasoning with "…"? Biased context: does the answer flip to a planted hint while the chain stays silent?</p>
+        <details class="probe-why on-panel"><summary>why this probe</summary><p class="note on-panel">Each isolates a different failure mode. Early answering: did the model decide before reasoning? Paraphrase: does a reword move the answer (it shouldn't)? Filler: does accuracy survive replacing the reasoning with "…"? Biased context: does the answer flip to a planted hint while the chain stays silent?</p></details>
         <div class="table-scroll"><table class="data on-panel" id="battery-table"></table></div>
       </div>
 
-      <div id="mech-block">
+      <div class="probe-block" data-probe="mech" id="mech-block">
         <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">Mechanistic — from the inside</h3>
-        <p class="note on-panel" style="margin-bottom:16px;">A continuous measure on a local model: how far corrupting a step lowers the log-probability of the answer. No string matching. If it agrees with the behavioural labels, the method is validated.</p>
+        <details class="probe-why on-panel"><summary>why this probe</summary><p class="note on-panel">A continuous measure on a local model: how far corrupting a step lowers the log-probability of the answer. No string matching. If it agrees with the behavioural labels, the method is validated.</p></details>
         <div id="mech-chart"></div>
       </div>
 
-      <div id="regression-block">
+      <div class="probe-block" data-probe="regression" id="regression-block">
         <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">Regression — separating the confounds</h3>
-        <p class="note on-panel" style="margin-bottom:16px;">Logistic model for the odds of "follows", with standard errors clustered by question. It asks whether step position still predicts following once the answer-step flag is in the model.</p>
+        <details class="probe-why on-panel"><summary>why this probe</summary><p class="note on-panel">Logistic model for the odds of "follows", with standard errors clustered by question. It asks whether step position still predicts following once the answer-step flag is in the model.</p></details>
         <div class="table-scroll"><table class="data on-panel" id="regression-table"></table></div>
         <p class="note on-panel" id="regression-note" style="margin-top:12px;"></p>
       </div>
 
-      <div id="writer-block">
+      <div class="probe-block" data-probe="writer" id="writer-block">
         <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">Who wrote the corruption — the de-confound</h3>
-        <p class="note on-panel" style="margin-bottom:16px;">A model editing its own reasoning is a confound. Each cell is marked by whether the writer was the model under test ("self") or an independent model. If dependency is higher under "self", the headline was inflated — the "independent" row is the trustworthy number. Pass <code>--writer-model</code> with a model not under test to remove it entirely.</p>
+        <details class="probe-why on-panel"><summary>why this probe</summary><p class="note on-panel">A model editing its own reasoning is a confound. Each cell is marked by whether the writer was the model under test ("self") or an independent model. If dependency is higher under "self", the headline was inflated — the "independent" row is the trustworthy number. Pass <code>--writer-model</code> with a model not under test to remove it entirely.</p></details>
         <div class="table-scroll"><table class="data on-panel" id="writer-table"></table></div>
       </div>
 
-      <div id="transfer-block">
+      <div class="probe-block" data-probe="transfer" id="transfer-block">
         <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">Cross-model transfer — is brittleness shared?</h3>
-        <p class="note on-panel" style="margin-bottom:16px;">For each pair of models, over the cells they share: how often they land on the same label, and the overlap of the cells each <em>follows</em>. High overlap means some steps are brittle for everyone (a property of the question); low overlap means unfaithfulness is model-specific.</p>
+        <details class="probe-why on-panel"><summary>why this probe</summary><p class="note on-panel">For each pair of models, over the cells they share: how often they land on the same label, and the overlap of the cells each <em>follows</em>. High overlap means some steps are brittle for everyone (a property of the question); low overlap means unfaithfulness is model-specific.</p></details>
         <div class="table-scroll"><table class="data on-panel" id="transfer-table"></table></div>
       </div>
 
-      <div id="patch-block">
+      <div class="probe-block" data-probe="patch" id="patch-block">
         <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">Activation patching — true causal tracing</h3>
-        <p class="note on-panel" style="margin-bottom:16px;">The log-prob drop is correlational. This is causal: patch the clean residual stream back into the corrupted run, one layer at a time, and measure how much of the answer is restored. The layer where restoration rises is where the corrupted step's effect is carried.</p>
+        <details class="probe-why on-panel"><summary>why this probe</summary><p class="note on-panel">The log-prob drop is correlational. This is causal: patch the clean residual stream back into the corrupted run, one layer at a time, and measure how much of the answer is restored. The layer where restoration rises is where the corrupted step's effect is carried.</p></details>
         <div id="patch-chart"></div>
       </div>
 
-      <div id="introspect-block">
+      <div class="probe-block" data-probe="introspect" id="introspect-block">
         <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">Self-knowledge — does the model notice?</h3>
-        <p class="note on-panel" style="margin-bottom:16px;">Shown a chain with one step silently corrupted, does the model flag a mistake? <b>Detection</b> is the flag rate on real errors; <b>false alarm</b> the rate on the control (nothing wrong); <b>fooled &amp; blind</b> is the worst case — it followed the error into its answer and did not notice.</p>
+        <details class="probe-why on-panel"><summary>why this probe</summary><p class="note on-panel">Shown a chain with one step silently corrupted, does the model flag a mistake? <b>Detection</b> is the flag rate on real errors; <b>false alarm</b> the rate on the control (nothing wrong); <b>fooled &amp; blind</b> is the worst case — it followed the error into its answer and did not notice.</p></details>
         <div class="table-scroll"><table class="data on-panel" id="introspect-table"></table></div>
       </div>
 
-      <div id="severity-block">
+      <div class="probe-block" data-probe="severity" id="severity-block">
         <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">Severity ladder — dose-response</h3>
-        <p class="note on-panel" style="margin-bottom:16px;">The same cell corrupted by a near-miss, a clear error, and an order-of-magnitude error. A faithful model follows more as the <em>consequential</em> error grows, while the <em>control</em> (more and more irrelevant noise) stays flat and low. A control line that climbs with the amount of noise is surface-reactivity, not reasoning.</p>
+        <details class="probe-why on-panel"><summary>why this probe</summary><p class="note on-panel">The same cell corrupted by a near-miss, a clear error, and an order-of-magnitude error. A faithful model follows more as the <em>consequential</em> error grows, while the <em>control</em> (more and more irrelevant noise) stays flat and low. A control line that climbs with the amount of noise is surface-reactivity, not reasoning.</p></details>
         <div id="severity-chart"></div>
       </div>
 
-      <div id="power-block">
+      <div class="probe-block" data-probe="power" id="power-block">
         <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">How big does the run need to be?</h3>
-        <p class="note on-panel" style="margin-bottom:16px;">The unit of sampling is the <em>question</em>, not the cell — one question's cells share a chain of thought, so they carry less information than the same number of independent observations. The <b>design effect</b> is how much that clustering inflates what a run needs; ignoring it under-sizes the experiment. Both inputs are measured from this run, not assumed.</p>
+        <details class="probe-why on-panel"><summary>why this probe</summary><p class="note on-panel">The unit of sampling is the <em>question</em>, not the cell — one question's cells share a chain of thought, so they carry less information than the same number of independent observations. The <b>design effect</b> is how much that clustering inflates what a run needs; ignoring it under-sizes the experiment. Both inputs are measured from this run, not assumed.</p></details>
         <div class="metric-toggle" id="power-toggle" role="group" aria-label="Effect size to detect" style="margin-bottom:16px;">
           <button class="chip" data-p1="0.60" data-p2="0.25" aria-pressed="false">large · 60% vs 25%</button>
           <button class="chip" data-p1="0.40" data-p2="0.25" aria-pressed="true">moderate · 40% vs 25%</button>
@@ -1050,9 +1114,9 @@ table.data tbody tr:hover { background: var(--paper-3); }
         <p class="note on-panel" id="power-note" style="margin-top:14px;"></p>
       </div>
 
-      <div id="capability-block">
+      <div class="probe-block" data-probe="capability" id="capability-block">
         <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">Capability vs faithfulness</h3>
-        <p class="note on-panel" style="margin-bottom:16px;">Each model's baseline accuracy against how much its answer actually tracks the written reasoning (reasoning-only, chance-corrected dependency). Does a more capable model reason more faithfully, or is capability unrelated to faithfulness? With few models the correlation is indicative, not conclusive.</p>
+        <details class="probe-why on-panel"><summary>why this probe</summary><p class="note on-panel">Each model's baseline accuracy against how much its answer actually tracks the written reasoning (reasoning-only, chance-corrected dependency). Does a more capable model reason more faithfully, or is capability unrelated to faithfulness? With few models the correlation is indicative, not conclusive.</p></details>
         <div id="capability-chart"></div>
       </div>
 
@@ -1262,9 +1326,9 @@ const VIEWS = [
     sections: ["top"] },
   { id: "scores", label: "Faithfulness", ic: "▦", desc: "models × classes", grp: "Read",
     sections: ["heatmap", "datasets"] },
-  { id: "findings", label: "Findings", ic: "◆", desc: "tautology, ablation, pairs", grp: "Read",
+  { id: "findings", label: "Findings", ic: "◆", desc: "choose your probes", grp: "Read",
     sections: ["findings"] },
-  { id: "diagnostics", label: "Diagnostics", ic: "⚗", desc: "battery, mech, sizing…", grp: "Deeper",
+  { id: "diagnostics", label: "Diagnostics", ic: "⚗", desc: "all probes · triangulation", grp: "Deeper",
     sections: ["methods"] },
   { id: "grid", label: "Step grid", ic: "▤", desc: "question × step", grp: "Deeper",
     sections: ["grid"] },
@@ -1275,6 +1339,144 @@ const VIEWS = [
   { id: "report", label: "Report", ic: "✎", desc: "the agent's write-up", grp: "Interact",
     sections: ["analysis"] },
 ];
+
+/* ===========================================================================
+   Probes — the multi-probe registry, picker and triangulation overview
+
+   Every arm of the project is one probe. Each answers a different question,
+   and each can fail in a way the others cannot see, so the dashboard treats
+   them as a set the reader chooses from rather than a wall of panels. A probe
+   whose sidecar was never produced stays visible in the picker, dimmed, so
+   "not run" never looks like "nothing to find".
+   =========================================================================== */
+const PROBES = [
+  { id:"tautology",    group:"findings", label:"Answer-step tautology", asks:"Did the edit just overwrite the stated answer?" },
+  { id:"necessity",    group:"findings", label:"Ablation",              asks:"Was the step needed at all?" },
+  { id:"interactions", group:"findings", label:"Pairs",                 asks:"Is the reasoning redundant rather than inert?" },
+  { id:"domain",       group:"findings", label:"By domain",             asks:"Which kinds of reasoning hold up?" },
+  { id:"leaderboard",  group:"findings", label:"Leaderboard",           asks:"Which model to trust, per domain?" },
+  { id:"probeset",     group:"findings", label:"Probe set",             asks:"Measured against known critical steps." },
+  { id:"battery",      group:"methods",  label:"Battery",               asks:"Four tests beyond step corruption." },
+  { id:"mech",         group:"methods",  label:"Mechanistic",           asks:"How far does the answer's log-prob fall?" },
+  { id:"regression",   group:"methods",  label:"Regression",            asks:"Which confound actually predicts following?" },
+  { id:"writer",       group:"methods",  label:"Writer",                asks:"Did the model corrupt its own steps?" },
+  { id:"transfer",     group:"methods",  label:"Transfer",              asks:"Is brittleness shared across models?" },
+  { id:"patch",        group:"methods",  label:"Patching",              asks:"Where is the effect carried?" },
+  { id:"introspect",   group:"methods",  label:"Self-knowledge",        asks:"Does the model notice the error?" },
+  { id:"severity",     group:"methods",  label:"Severity",              asks:"Does following scale with the error?" },
+  { id:"power",        group:"methods",  label:"Run sizing",            asks:"How many questions does this need?" },
+  { id:"capability",   group:"methods",  label:"Capability",            asks:"Does capability track faithfulness?" },
+];
+
+const PROBE_STORE = "stepwise.probes.v1";
+function probeBlock(id) { return $(id === "probeset" ? "probe-block" : id + "-block"); }
+
+function loadProbeChoice() {
+  // Per-viewer convenience only; a blocked or empty store just means "all on".
+  try {
+    const raw = localStorage.getItem(PROBE_STORE);
+    if (raw) return new Set(JSON.parse(raw));
+  } catch (_) {}
+  return new Set(PROBES.map((x) => x.id));
+}
+function saveProbeChoice() {
+  try { localStorage.setItem(PROBE_STORE, JSON.stringify([...state.probes])); } catch (_) {}
+}
+
+/** A probe "ran" if its block drew something — a data row, a chart, or stats. */
+function probeRan(el) {
+  if (!el) return false;
+  if (el.querySelector(".empty-state")) return false;
+  if (el.querySelectorAll("table.data tr").length > 1) return true;
+  if (el.querySelector("svg")) return true;
+  return el.querySelectorAll("dl.stats > *").length > 0;
+}
+
+function renderProbeBars() {
+  document.querySelectorAll(".probe-bar").forEach((bar) => {
+    const group = bar.dataset.group;
+    const mine = PROBES.filter((x) => x.group === group);
+    const on = bar.classList.contains("on-panel");
+    bar.innerHTML = `
+      <div class="probe-head">
+        <span class="ttl">Probes — choose what to show</span>
+        <span class="probe-acts">
+          <button type="button" data-act="all">all</button>
+          <button type="button" data-act="ran">only what ran</button>
+          <button type="button" data-act="none">none</button>
+        </span>
+      </div>
+      <div class="probe-chips">
+        ${mine.map((x) => `<button type="button" class="chip probe-chip${on ? "" : " light"}"
+            data-probe="${x.id}" aria-pressed="false" title="${esc(x.asks)}"
+            ><span class="dot"></span>${esc(x.label)}</button>`).join("")}
+      </div>
+      <p class="probe-count" style="margin-top:10px;"></p>`;
+    bar.querySelectorAll(".probe-chip").forEach((b) =>
+      b.addEventListener("click", () => {
+        const id = b.dataset.probe;
+        if (state.probes.has(id)) state.probes.delete(id); else state.probes.add(id);
+        saveProbeChoice(); applyProbeChoice();
+      }));
+    bar.querySelectorAll(".probe-acts button").forEach((b) =>
+      b.addEventListener("click", () => {
+        const act = b.dataset.act;
+        mine.forEach((x) => {
+          if (act === "all") state.probes.add(x.id);
+          else if (act === "none") state.probes.delete(x.id);
+          else if (probeRan(probeBlock(x.id))) state.probes.add(x.id); else state.probes.delete(x.id);
+        });
+        saveProbeChoice(); applyProbeChoice();
+      }));
+  });
+}
+
+function applyProbeChoice() {
+  for (const probe of PROBES) {
+    const el = probeBlock(probe.id);
+    if (el) el.classList.toggle("hidden", !state.probes.has(probe.id));
+  }
+  document.querySelectorAll(".probe-bar").forEach((bar) => {
+    const mine = PROBES.filter((x) => x.group === bar.dataset.group);
+    let shown = 0, ran = 0;
+    bar.querySelectorAll(".probe-chip").forEach((b) => {
+      const id = b.dataset.probe;
+      const spec = PROBES.find((x) => x.id === id);
+      const did = probeRan(probeBlock(id));
+      b.dataset.available = did ? "1" : "0";
+      b.setAttribute("aria-pressed", state.probes.has(id) ? "true" : "false");
+      b.title = did ? spec.asks : spec.asks + " — not run for this run";
+      if (state.probes.has(id)) shown++;
+      if (did) ran++;
+    });
+    const note = bar.querySelector(".probe-count");
+    if (note) note.textContent =
+      `${shown} of ${mine.length} shown · ${ran} ran for this run · ${mine.length - ran} not run`;
+  });
+  renderTriangulation();
+}
+
+/** The multi-probe view: every arm, what it asks, and whether it ran here. */
+function renderTriangulation() {
+  const host = $("triangulation");
+  if (!host) return;
+  const cells = PROBES.map((x) => {
+    const did = probeRan(probeBlock(x.id));
+    return `<div class="tri-cell" data-ran="${did ? 1 : 0}">
+      <div class="nm">${esc(x.label)}</div>
+      <div class="qs">${esc(x.asks)}</div>
+      <div class="st">${did ? "ran" : "not run"}</div>
+    </div>`;
+  }).join("");
+  const ran = PROBES.filter((x) => probeRan(probeBlock(x.id))).length;
+  host.innerHTML = `
+    <h3 style="font-size:19px; color:var(--on-panel); margin-bottom:6px;">Every probe, and whether it ran</h3>
+    <p class="note on-panel" style="margin-bottom:16px;">No single probe can separate its own failure modes — corruption cannot tell
+      <em>load-bearing</em> from <em>the model noticed the error</em>, and one step at a time cannot tell
+      <em>inert</em> from <em>redundant</em>. Each arm below breaks a tie in another. <strong>${ran} of ${PROBES.length}</strong>
+      ran for this run; the rest need their own command and are listed so a gap never reads as a null result.</p>
+    <div class="tri-grid">${cells}</div>`;
+}
 
 function initNav() {
   const nav = $("sb-nav");
@@ -1347,6 +1549,8 @@ function showNoRuns() {
   $("analysis-body").innerHTML = `<div class="empty-state">Nothing to analyse yet.</div>`;
 }
 
+let __probesInit = false;
+
 async function loadRun(name) {
   state.run = name;
   state.page = 0;
@@ -1371,27 +1575,30 @@ async function loadRun(name) {
 }
 
 async function refresh() {
+  // Synchronous panels first — they read the summary payload already in hand.
   renderHeatmap();
   renderOutcomes();
   renderModelTable();
   renderBreakdown();
   renderTautology();
-  renderNecessity();
-  renderInteractions();
   renderDomainChart();
   renderLeaderboard();
-  renderBattery();
-  renderMech();
-  renderRegression();
   renderWriter();
   renderTransfer();
-  renderPatch();
-  renderIntrospect();
-  renderProbe();
   renderSeverity();
   renderCapability();
-  renderPower();
-  await Promise.all([renderDepGrid(), renderRecords()]);
+  // Every panel that fetches a sidecar of its own. These must be awaited: the
+  // probe picker decides what "ran" by looking at what each block drew, and
+  // reading that before the fetches land reports a live probe as missing.
+  await Promise.all([
+    renderNecessity(), renderInteractions(), renderBattery(), renderMech(),
+    renderRegression(), renderPatch(), renderIntrospect(), renderProbe(),
+    renderPower(), renderDepGrid(), renderRecords(),
+  ]);
+  // Availability is only knowable after the renderers have drawn, so the
+  // picker is built once and re-synced against the DOM on every run change.
+  if (!__probesInit) { state.probes = loadProbeChoice(); renderProbeBars(); __probesInit = true; }
+  applyProbeChoice();
 }
 
 function renderSimBanner() {

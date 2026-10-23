@@ -7,6 +7,7 @@ directory, so nothing here depends on a real evaluation having been run.
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -442,10 +443,43 @@ def test_the_effect_size_chips_cover_three_sizes():
     assert page.count('data-p1="0.40" data-p2="0.25" aria-pressed="true"') == 1
 
 
-def test_the_nav_mentions_the_new_work():
+def test_the_nav_points_at_the_probe_picker():
     page = _page()
-    assert "tautology, ablation, pairs" in page     # Findings
-    assert "battery, mech, sizing" in page          # Diagnostics
+    assert "choose your probes" in page             # Findings
+    assert "all probes" in page                     # Diagnostics
+
+
+def test_every_probe_in_the_registry_has_a_block_to_show():
+    """A registry entry with no block silently renders an empty picker chip."""
+    page = _page()
+    ids = re.findall(r'\{ id:"(\w+)",\s+group:"(findings|methods)"', page)
+    assert len(ids) >= 16, f"expected the full probe registry, found {len(ids)}"
+    for probe_id, _group in ids:
+        block = "probe-block" if probe_id == "probeset" else f"{probe_id}-block"
+        assert f'id="{block}"' in page, f"{probe_id} has no block"
+        assert f'data-probe="{probe_id}"' in page, f"{probe_id} is not tagged"
+
+
+def test_the_picker_can_select_filter_and_persist():
+    page = _page()
+    for hook in ('data-act="all"', 'data-act="ran"', 'data-act="none"',
+                 "stepwise.probes.v1", "function applyProbeChoice()",
+                 "function probeRan(", 'id="triangulation"'):
+        assert hook in page, hook
+
+
+def test_availability_is_read_after_the_async_panels_land():
+    """The picker decides "ran" from what each block drew, so every panel that
+    fetches a sidecar has to be awaited before applyProbeChoice runs."""
+    page = _page()
+    body = page[page.index("async function refresh()"):]
+    body = body[: body.index("\n}")]
+    awaited = body[body.index("await Promise.all(["):]
+    for renderer in ("renderNecessity()", "renderInteractions()", "renderBattery()",
+                     "renderMech()", "renderPatch()", "renderIntrospect()",
+                     "renderProbe()", "renderPower()"):
+        assert renderer in awaited, f"{renderer} must be awaited before the picker syncs"
+    assert body.index("await Promise.all([") < body.index("applyProbeChoice()")
 
 
 def test_power_endpoint_supplies_every_field_the_panel_reads(client):
@@ -500,7 +534,7 @@ def test_the_page_has_an_interactions_panel():
     page = _page()
     assert 'id="interactions-table"' in page
     assert 'id="interactions-note"' in page
-    assert "renderInteractions();" in page
+    assert "renderInteractions()" in page
     assert "async function renderInteractions()" in page
 
 
